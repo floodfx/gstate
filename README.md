@@ -216,3 +216,9 @@ s.State("check_balance", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext
 ## Detailed Examples
 
 Check the [examples/](./examples) directory for runnable code with deep commentary on every feature.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
