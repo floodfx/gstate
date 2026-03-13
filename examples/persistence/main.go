@@ -8,36 +8,36 @@ import (
 	"github.com/floodfx/gstate"
 )
 
-type S string
-type E string
+type MyState string
+type MyEvent string
 
-// C is our context data. It MUST be JSON serializable for persistence.
-type C struct {
+// MyContext is our context data. It MUST be JSON serializable for persistence.
+type MyContext struct {
 	Value string `json:"value"`
 }
 
 func main() {
 	// 1. Persistence and Hydration allow you to save and restore the state of an actor.
 	// This is critical for long-running workflows that must survive app restarts.
-	machine := gstate.New[S, E, C]("persistence_demo").
+	machine := gstate.New[MyState, MyEvent, MyContext]("persistence_demo").
 		Initial("one").
-		State("one", func(s *gstate.StateBuilder[S, E, C]) {
+		State("one", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.On("NEXT").
-				Assign(func(c C) C { c.Value = "step1_complete"; return c }).
+				Assign(func(c MyContext) MyContext { c.Value = "step1_complete"; return c }).
 				GoTo("two")
 		}).
-		State("two", func(s *gstate.StateBuilder[S, E, C]) {
+		State("two", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.On("FINISH").
-				Assign(func(c C) C { c.Value = "step2_complete"; return c }).
+				Assign(func(c MyContext) MyContext { c.Value = "step2_complete"; return c }).
 				GoTo("three")
 		}).
-		State("three", func(s *gstate.StateBuilder[S, E, C]) {
+		State("three", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Type(gstate.Final)
 		}).
 		Build()
 
 	fmt.Println("--- Step 1: Start Actor and Trigger a Transition ---")
-	actor1 := gstate.Start(machine, C{Value: "initial"})
+	actor1 := gstate.Start(machine, MyContext{Value: "initial"})
 	actor1.Send("NEXT")
 	time.Sleep(10 * time.Millisecond)
 
@@ -45,7 +45,7 @@ func main() {
 	// This returns a Snapshot struct containing:
 	// - Active States
 	// - History map
-	// - Context data
+	// - MyContext data
 	snapshot := actor1.Snapshot()
 	
 	// Convert snapshot to JSON. This could be saved to a database.
@@ -54,7 +54,7 @@ func main() {
 
 	fmt.Println("\n--- Step 2: Hydrate a New Actor from the Snapshot ---")
 	// Simulate loading the JSON back.
-	var loadedSnapshot gstate.Snapshot[S, C]
+	var loadedSnapshot gstate.Snapshot[MyState, MyContext]
 	json.Unmarshal(data, &loadedSnapshot)
 
 	// gstate.Hydrate creates a new Actor in exactly the same state.

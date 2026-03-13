@@ -9,27 +9,27 @@ import (
 
 // 1. Define types for State IDs, Event IDs, and Context.
 // Using custom types (~string) provides better safety than raw strings.
-type S string
-type E string
+type MyState string
+type MyEvent string
 
-// Context is the data held by the state machine.
+// MyContext is the data held by the state machine.
 // All updates to context are pure functions (Assign).
-type C struct {
+type MyContext struct {
 	Count int
 }
 
 func main() {
 	// 2. Build the Machine (the "Blueprint")
 	// The machine is immutable once built.
-	machine := gstate.New[S, E, C]("counter").
+	machine := gstate.New[MyState, MyEvent, MyContext]("counter").
 		Initial("idle"). // Set the starting state
 		
 		// Define the 'idle' state
-		State("idle", func(s *gstate.StateBuilder[S, E, C]) {
+		State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// Define an internal transition (no state change)
 			// Assign is used to modify the context data.
 			s.On("INCREMENT").
-				Assign(func(c C) C {
+				Assign(func(c MyContext) MyContext {
 					c.Count++
 					fmt.Printf("[idle] Incremented count to: %d\n", c.Count)
 					return c
@@ -40,15 +40,15 @@ func main() {
 		}).
 
 		// Define the 'active' state
-		State("active", func(s *gstate.StateBuilder[S, E, C]) {
+		State("active", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// Entry actions fire when the state is entered.
-			s.Entry(func(c C) C {
+			s.Entry(func(c MyContext) MyContext {
 				fmt.Println("[active] Entering state...")
 				return c
 			})
 
 			// Exit actions fire when the state is left.
-			s.Exit(func(c C) C {
+			s.Exit(func(c MyContext) MyContext {
 				fmt.Println("[active] Leaving state...")
 				return c
 			})
@@ -61,7 +61,7 @@ func main() {
 	// 3. Start the Actor (the "Execution")
 	// The Actor holds the specific instance's state and context.
 	fmt.Println("--- Starting Actor ---")
-	actor := gstate.Start(machine, C{Count: 0})
+	actor := gstate.Start(machine, MyContext{Count: 0})
 
 	// 4. Send Events
 	// Send is non-blocking and queues the event in the actor's mailbox.

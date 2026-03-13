@@ -7,16 +7,17 @@ import (
 	"github.com/floodfx/gstate"
 )
 
-type S string
-type E string
+type MyState string
+type MyEvent string
+type MyContext any
 
 func main() {
 	// 1. Delayed Transitions are transitions that happen automatically
 	// after a specified time.time.Duration.
 	// This is commonly used for timeouts, heartbeats, or debouncing.
-	machine := gstate.New[S, E, any]("timeout_demo").
+	machine := gstate.New[MyState, MyEvent, MyContext]("timeout_demo").
 		Initial("waiting").
-		State("waiting", func(s *gstate.StateBuilder[S, E, any]) {
+		State("waiting", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			fmt.Println("[waiting] State entered. Starting 100ms timer...")
 			
 			// If we stay in this state for 100ms, move to 'timeout'.
@@ -26,10 +27,10 @@ func main() {
 			// Define an event that could move us away before the timeout hits.
 			s.On("USER_ACTION").GoTo("other_state")
 		}).
-		State("timeout", func(s *gstate.StateBuilder[S, E, any]) {
+		State("timeout", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			fmt.Println("[timeout] The timer fired! Transitioned successfully.")
 		}).
-		State("other_state", func(s *gstate.StateBuilder[S, E, any]) {
+		State("other_state", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			fmt.Println("[other_state] Left 'waiting' before timeout.")
 		}).
 		Build()

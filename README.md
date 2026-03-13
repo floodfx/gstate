@@ -29,17 +29,17 @@ Every statechart starts with three core concepts:
 
 ### Example: A Simple Toggle
 ```go
-type S string // State ID type
-type E string // Event ID type
-type C any    // Context (data) type
+type MyState string // State ID type
+type MyEvent string // Event ID type
+type MyContext any  // Context (data) type
 
-machine := gstate.New[S, E, C]("toggle").
+machine := gstate.New[MyState, MyEvent, MyContext]("toggle").
     Initial("off").
-    State("off", func(s *gstate.StateBuilder[S, E, C]) {
+    State("off", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
         // When "TOGGLE" event is received, move to "on"
         s.On("TOGGLE").GoTo("on")
     }).
-    State("on", func(s *gstate.StateBuilder[S, E, C]) {
+    State("on", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
         s.On("TOGGLE").GoTo("off")
     }).
     Build()
@@ -94,14 +94,14 @@ In a complex system, some states are "sub-modes" of others. For example, a `User
 - **Common Actions**: Define an `Entry` action on a parent that runs regardless of which child is entered.
 
 ```go
-s.State("parent", func(s *gstate.StateBuilder[S, E, C]) {
+s.State("parent", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
     s.Initial("childA")
     
     // If ANY child receives "RESET", we go to "parent.childA"
     s.On("RESET").GoTo("childA")
 
-    s.State("childA", func(s *gstate.StateBuilder[S, E, C]) { ... })
-    s.State("childB", func(s *gstate.StateBuilder[S, E, C]) { ... })
+    s.State("childA", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) { ... })
+    s.State("childB", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) { ... })
 })
 ```
 
@@ -115,12 +115,12 @@ Parallel states allow you to define regions that operate independently.
 
 ```go
 s.Type(gstate.Parallel)
-s.State("boldRegion", func(s *gstate.StateBuilder[S, E, C]) {
+s.State("boldRegion", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
     s.Initial("off")
     s.State("off", ...)
     s.State("on", ...)
 })
-s.State("italicsRegion", func(s *gstate.StateBuilder[S, E, C]) {
+s.State("italicsRegion", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
     s.Initial("off")
     s.State("off", ...)
     s.State("on", ...)
@@ -145,7 +145,7 @@ s.Invoke(func(ctx context.Context, c MyCtx) error {
 Transitions that happen automatically after a duration.
 
 ```go
-s.State("loading", func(s *gstate.StateBuilder[S, E, C]) {
+s.State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
     // If we are stuck here for 5 seconds, move to "error"
     s.After(5 * time.Second).GoTo("error")
 })
@@ -158,7 +158,7 @@ s.State("loading", func(s *gstate.StateBuilder[S, E, C]) {
 `Always` transitions fire immediately if their **Guard** (a condition function) is met. They don't wait for an external event. This is useful for "decider" states.
 
 ```go
-s.State("check_balance", func(s *gstate.StateBuilder[S, E, C]) {
+s.State("check_balance", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
     s.Always().
         Guard(func(c MyCtx) bool { return c.Balance > 100 }).
         GoTo("premium_user")

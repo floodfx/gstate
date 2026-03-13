@@ -7,38 +7,39 @@ import (
 	"github.com/floodfx/gstate"
 )
 
-type S string
-type E string
+type MyState string
+type MyEvent string
+type MyContext any
 
 func main() {
 	// 1. Parallel States allow a machine to be in multiple states simultaneously.
 	// This is useful for systems with orthogonal (independent) logic.
 	// In this example, a computer's Input system tracks Keyboard and Mouse states independently.
-	machine := gstate.New[S, E, any]("input_system").
+	machine := gstate.New[MyState, MyEvent, MyContext]("input_system").
 		Initial("active").
-		State("active", func(s *gstate.StateBuilder[S, E, any]) {
+		State("active", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// Set the type to Parallel. This means ALL immediate children will be active.
 			s.Type(gstate.Parallel)
 
 			// 2. Define the 'keyboard' region.
-			s.State("keyboard", func(s *gstate.StateBuilder[S, E, any]) {
+			s.State("keyboard", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 				s.Initial("caps_off")
-				s.State("caps_off", func(s *gstate.StateBuilder[S, E, any]) {
+				s.State("caps_off", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 					s.On("CAPS_LOCK").GoTo("caps_on")
 				})
-				s.State("caps_on", func(s *gstate.StateBuilder[S, E, any]) {
+				s.State("caps_on", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 					s.On("CAPS_LOCK").GoTo("caps_off")
 				})
 			})
 
 			// 3. Define the 'mouse' region.
 			// Transitions here do NOT affect the keyboard region.
-			s.State("mouse", func(s *gstate.StateBuilder[S, E, any]) {
+			s.State("mouse", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 				s.Initial("not_clicked")
-				s.State("not_clicked", func(s *gstate.StateBuilder[S, E, any]) {
+				s.State("not_clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 					s.On("CLICK").GoTo("clicked")
 				})
-				s.State("clicked", func(s *gstate.StateBuilder[S, E, any]) {
+				s.State("clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 					s.On("RELEASE").GoTo("not_clicked")
 				})
 			})

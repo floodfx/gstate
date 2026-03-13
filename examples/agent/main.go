@@ -8,11 +8,11 @@ import (
 	"github.com/floodfx/gstate"
 )
 
-type AgentState string
-type AgentEvent string
+type MyState string
+type MyEvent string
 
-// AgentCtx holds the state of our autonomous agent.
-type AgentCtx struct {
+// MyContext holds the state of our autonomous agent.
+type MyContext struct {
 	Retries     int
 	FixAttempts int
 	RepoDir     string
@@ -21,27 +21,27 @@ type AgentCtx struct {
 func main() {
 	// 1. This example combines multiple features: Invoke, Always, Guard, and Assign.
 	// It models a developer agent that investigates a problem, fixes it, and verifies.
-	machine := gstate.New[AgentState, AgentEvent, AgentCtx]("agent").
+	machine := gstate.New[MyState, MyEvent, MyContext]("agent").
 		Initial("investigating").
-		State("investigating", func(s *gstate.StateBuilder[AgentState, AgentEvent, AgentCtx]) {
+		State("investigating", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// Start async work when we enter 'investigating'.
-			s.Invoke(func(ctx context.Context, c AgentCtx) error {
+			s.Invoke(func(ctx context.Context, c MyContext) error {
 				fmt.Println("-> [investigating] Running diagnostics...")
 				time.Sleep(100 * time.Millisecond)
 				return nil
 			}, "approving", "done")
 		}).
-		State("approving", func(s *gstate.StateBuilder[AgentState, AgentEvent, AgentCtx]) {
+		State("approving", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// Wait for human/system input
 			s.On("YES").GoTo("fixing")
 			s.On("NO").GoTo("done")
 		}).
-		State("fixing", func(s *gstate.StateBuilder[AgentState, AgentEvent, AgentCtx]) {
+		State("fixing", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// 2. Transient Transition (Always).
 			// If FixAttempts >= 2, we immediately move to 'done' without waiting for an event.
 			s.Always().
-				Guard(func(c AgentCtx) bool { return c.FixAttempts >= 2 }).
-				Assign(func(c AgentCtx) AgentCtx {
+				Guard(func(c MyContext) bool { return c.FixAttempts >= 2 }).
+				Assign(func(c MyContext) MyContext {
 					fmt.Println("-> [fixing] Max fix attempts reached. Giving up.")
 					return c
 				}).
@@ -51,19 +51,19 @@ func main() {
 			
 			// If we retry, we increment a counter and go back to investigate.
 			s.On("RETRY").
-				Assign(func(c AgentCtx) AgentCtx {
+				Assign(func(c MyContext) MyContext {
 					c.FixAttempts++
 					fmt.Printf("-> [fixing] Retry attempt %d\n", c.FixAttempts)
 					return c
 				}).
 				GoTo("investigating")
 		}).
-		State("verifying", func(s *gstate.StateBuilder[AgentState, AgentEvent, AgentCtx]) {
+		State("verifying", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// 3. Conditional Transition (Guard).
 			// If verification fails, we can retry 'fixing' if we haven't hit the retry limit.
 			s.On("FAIL").
-				Guard(func(c AgentCtx) bool { return c.Retries < 2 }).
-				Assign(func(c AgentCtx) AgentCtx {
+				Guard(func(c MyContext) bool { return c.Retries < 2 }).
+				Assign(func(c MyContext) MyContext {
 					c.Retries++
 					fmt.Printf("-> [verifying] Retry count: %d\n", c.Retries)
 					return c
@@ -73,9 +73,9 @@ func main() {
 			s.On("FAIL").GoTo("done") // Fallback if Guard fails
 			s.On("PASS").GoTo("done")
 		}).
-		State("done", func(s *gstate.StateBuilder[AgentState, AgentEvent, AgentCtx]) {
+		State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Type(gstate.Final)
-			s.Entry(func(c AgentCtx) AgentCtx {
+			s.Entry(func(c MyContext) MyContext {
 				fmt.Println("-> [done] Agent workflow complete.")
 				return c
 			})
@@ -83,7 +83,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Agent Actor ---")
-	actor := gstate.Start(machine, AgentCtx{RepoDir: "./workspace"})
+	actor := gstate.Start(machine, MyContext{RepoDir: "./workspace"})
 
 	// 4. Simulation loop to drive the agent.
 	ticker := time.NewTicker(50 * time.Millisecond)

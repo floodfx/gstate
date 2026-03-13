@@ -8,18 +8,19 @@ import (
 	"github.com/floodfx/gstate"
 )
 
-type S string
-type E string
+type MyState string
+type MyEvent string
+type MyContext any
 
 func main() {
 	// 1. Invoked Services are goroutines that represent external side effects.
 	// Common uses: fetching data, starting a timer, or running a background task.
 	// CRITICAL: They are automatically cancelled if the state is left.
-	machine := gstate.New[S, E, any]("service_manager").
+	machine := gstate.New[MyState, MyEvent, MyContext]("service_manager").
 		Initial("loading").
-		State("loading", func(s *gstate.StateBuilder[S, E, any]) {
+		State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// s.Invoke starts a new goroutine when we enter 'loading'.
-			s.Invoke(func(ctx context.Context, c any) error {
+			s.Invoke(func(ctx context.Context, c MyContext) error {
 				fmt.Println("  [Invoke] Starting async work...")
 				select {
 				case <-time.After(100 * time.Millisecond):
@@ -34,13 +35,13 @@ func main() {
 			// Allow manual cancellation
 			s.On("CANCEL").GoTo("idle")
 		}).
-		State("success", func(s *gstate.StateBuilder[S, E, any]) {
+		State("success", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Type(gstate.Final)
 		}).
-		State("error", func(s *gstate.StateBuilder[S, E, any]) {
+		State("error", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Type(gstate.Final)
 		}).
-		State("idle", func(s *gstate.StateBuilder[S, E, any]) {
+		State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// A dead-end state to test cancellation
 		}).
 		Build()
