@@ -50,11 +50,28 @@ machine := gstate.New[MyState, MyEvent, any]("toggle").
         s.On(EventToggle).GoTo(StateOff)
     }).
     Build()
-```
+    ```
 
----
+    ---
 
-### 2. Managing Data with Context (`Assign`)
+    ## 2. Type Safety & Generics
+
+    One of the core strengths of `gstate` is its use of Go 1.18+ generics to provide strict type safety.
+
+    The library uses three generic parameters: `[S ~string, E ~string, C any]`.
+
+    - **`S` (State ID)**: By using a custom string type (e.g., `type MyState string`), you ensure that `Initial()`, `State()`, and `GoTo()` only accept valid state identifiers.
+    - **`E` (Event ID)**: Similarly, `On(event)` only accepts events of your specific type.
+    - **`C` (Context)**: The data your machine holds is strictly typed. Actions and guards receive this exact type, eliminating the need for `interface{}` casting.
+
+    **Benefits:**
+    - **No Typos**: Compilers will catch `actor.Send("TYPO")` if your event type is strictly defined.
+    - **IDE Support**: Autocomplete works for states, events, and context fields.
+    - **Safety**: Guards and Actions are verified at compile time to work with your specific data structure.
+
+    ---
+
+    ## 3. Managing Data with Context (`Assign`)
 
 Statecharts aren't just about labels; they often need to hold data. In `gstate`, this is called **Context**.
 
