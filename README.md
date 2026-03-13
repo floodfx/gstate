@@ -27,20 +27,27 @@ Every statechart starts with three core concepts:
 - **Event**: Something that happens (e.g., `START`, `MOUSE_CLICK`, `TIMEOUT`).
 - **Transition**: A rule that says: "When in state A, if event E happens, move to state B."
 
-### Example: A Simple Toggle
+### Example: A Simple Toggle with Typed Constants
 ```go
-type MyState string // State ID type
-type MyEvent string // Event ID type
-type MyContext any  // Context (data) type
+type MyState string
+type MyEvent string
 
-machine := gstate.New[MyState, MyEvent, MyContext]("toggle").
-    Initial("off").
-    State("off", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-        // When "TOGGLE" event is received, move to "on"
-        s.On("TOGGLE").GoTo("on")
+const (
+    StateOff MyState = "off"
+    StateOn  MyState = "on"
+)
+
+const (
+    EventToggle MyEvent = "TOGGLE"
+)
+
+machine := gstate.New[MyState, MyEvent, any]("toggle").
+    Initial(StateOff).
+    State(StateOff, func(s *gstate.StateBuilder[MyState, MyEvent, any]) {
+        s.On(EventToggle).GoTo(StateOn)
     }).
-    State("on", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-        s.On("TOGGLE").GoTo("off")
+    State(StateOn, func(s *gstate.StateBuilder[MyState, MyEvent, any]) {
+        s.On(EventToggle).GoTo(StateOff)
     }).
     Build()
 ```

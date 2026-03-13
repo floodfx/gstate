@@ -11,6 +11,23 @@ import (
 type MyState string
 type MyEvent string
 
+const (
+	StateInvestigating MyState = "investigating"
+	StateApproving     MyState = "approving"
+	StateFixing        MyState = "fixing"
+	StateVerifying     MyState = "verifying"
+	StateDone          MyState = "done"
+)
+
+const (
+	EventYes     MyEvent = "YES"
+	EventNo      MyEvent = "NO"
+	EventSuccess MyEvent = "SUCCESS"
+	EventRetry   MyEvent = "RETRY"
+	EventFail    MyEvent = "FAIL"
+	EventPass    MyEvent = "PASS"
+)
+
 // MyContext holds the state of our autonomous agent.
 type MyContext struct {
 	Retries     int
@@ -19,61 +36,52 @@ type MyContext struct {
 }
 
 func main() {
-	// 1. This example combines multiple features: Invoke, Always, Guard, and Assign.
-	// It models a developer agent that investigates a problem, fixes it, and verifies.
 	machine := gstate.New[MyState, MyEvent, MyContext]("agent").
-		Initial("investigating").
-		State("investigating", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-			// Start async work when we enter 'investigating'.
+		Initial(StateInvestigating).
+		State(StateInvestigating, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Invoke(func(ctx context.Context, c MyContext) error {
 				fmt.Println("-> [investigating] Running diagnostics...")
 				time.Sleep(100 * time.Millisecond)
 				return nil
-			}, "approving", "done")
+			}, StateApproving, StateDone)
 		}).
-		State("approving", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-			// Wait for human/system input
-			s.On("YES").GoTo("fixing")
-			s.On("NO").GoTo("done")
+		State(StateApproving, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+			s.On(EventYes).GoTo(StateFixing)
+			s.On(EventNo).GoTo(StateDone)
 		}).
-		State("fixing", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-			// 2. Transient Transition (Always).
-			// If FixAttempts >= 2, we immediately move to 'done' without waiting for an event.
+		State(StateFixing, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Always().
 				Guard(func(c MyContext) bool { return c.FixAttempts >= 2 }).
 				Assign(func(c MyContext) MyContext {
 					fmt.Println("-> [fixing] Max fix attempts reached. Giving up.")
 					return c
 				}).
-				GoTo("done")
+				GoTo(StateDone)
 
-			s.On("SUCCESS").GoTo("verifying")
+			s.On(EventSuccess).GoTo(StateVerifying)
 			
-			// If we retry, we increment a counter and go back to investigate.
-			s.On("RETRY").
+			s.On(EventRetry).
 				Assign(func(c MyContext) MyContext {
 					c.FixAttempts++
 					fmt.Printf("-> [fixing] Retry attempt %d\n", c.FixAttempts)
 					return c
 				}).
-				GoTo("investigating")
+				GoTo(StateInvestigating)
 		}).
-		State("verifying", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-			// 3. Conditional Transition (Guard).
-			// If verification fails, we can retry 'fixing' if we haven't hit the retry limit.
-			s.On("FAIL").
+		State(StateVerifying, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+			s.On(EventFail).
 				Guard(func(c MyContext) bool { return c.Retries < 2 }).
 				Assign(func(c MyContext) MyContext {
 					c.Retries++
 					fmt.Printf("-> [verifying] Retry count: %d\n", c.Retries)
 					return c
 				}).
-				GoTo("fixing")
+				GoTo(StateFixing)
 
-			s.On("FAIL").GoTo("done") // Fallback if Guard fails
-			s.On("PASS").GoTo("done")
+			s.On(EventFail).GoTo(StateDone)
+			s.On(EventPass).GoTo(StateDone)
 		}).
-		State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State(StateDone, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Type(gstate.Final)
 			s.Entry(func(c MyContext) MyContext {
 				fmt.Println("-> [done] Agent workflow complete.")
@@ -85,7 +93,6 @@ func main() {
 	fmt.Println("--- Starting Agent Actor ---")
 	actor := gstate.Start(machine, MyContext{RepoDir: "./workspace"})
 
-	// 4. Simulation loop to drive the agent.
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -94,22 +101,21 @@ func main() {
 		fmt.Printf("Current State: %s\n", state)
 
 		switch state {
-		case "approving":
+		case StateApproving:
 			fmt.Println("Action: Sending YES")
-			actor.Send("YES")
-		case "fixing":
-			// If we've already retried once, let's succeed this time.
+			actor.Send(EventYes)
+		case StateFixing:
 			if actor.Snapshot().Context.FixAttempts < 1 {
 				fmt.Println("Action: Sending RETRY")
-				actor.Send("RETRY")
+				actor.Send(EventRetry)
 			} else {
 				fmt.Println("Action: Sending SUCCESS")
-				actor.Send("SUCCESS")
+				actor.Send(EventSuccess)
 			}
-		case "verifying":
+		case StateVerifying:
 			fmt.Println("Action: Sending PASS")
-			actor.Send("PASS")
-		case "done":
+			actor.Send(EventPass)
+		case StateDone:
 			fmt.Println("\nSimulation finished.")
 			return
 		}
