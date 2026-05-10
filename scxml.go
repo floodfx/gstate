@@ -283,8 +283,13 @@ func convertStateNode[S ~string, E ~string, C any](def *StateDef[S, E, C], m *Ma
 		return convertFinalNode(def, m)
 	}
 
+	nodeKind := NodeState
+	if def.Type == Parallel {
+		nodeKind = NodeParallel
+	}
+
 	node := SCXMLNode{
-		Kind: NodeState,
+		Kind: nodeKind,
 		ID:   string(def.ID),
 	}
 
@@ -353,15 +358,13 @@ func convertStateNode[S ~string, E ~string, C any](def *StateDef[S, E, C], m *Ma
 	}
 
 	if def.Type == Parallel {
-		parNode := SCXMLNode{Kind: NodeParallel}
 		for _, childDef := range sortedChildren(def) {
 			childNode, err := convertStateNode(childDef, m)
 			if err != nil {
 				return SCXMLNode{}, err
 			}
-			parNode.Children = append(parNode.Children, childNode)
+			node.Children = append(node.Children, childNode)
 		}
-		node.Children = append(node.Children, parNode)
 	} else if len(def.States) > 0 {
 		if def.History == Shallow || def.History == Deep {
 			ht := "shallow"
