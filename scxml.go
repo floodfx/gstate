@@ -332,22 +332,7 @@ func convertStateNode[S ~string, E ~string, C any](def *StateDef[S, E, C], m *Ma
 
 	for _, t := range def.Delayed {
 		eventName := fmt.Sprintf("_delay.%s", def.ID)
-		tr := &SCXMLTransition{Event: eventName, Target: string(t.Target)}
-		if t.Guard != nil {
-			if t.GuardName != "" {
-				tr.Cond = t.GuardName
-			} else {
-				tr.Cond = "guard"
-			}
-		}
-		if t.Action != nil {
-			loc := ""
-			if t.ActionName != "" {
-				loc = t.ActionName
-			}
-			tr.Assign = []*SCXMLAssign{{Location: loc}}
-		}
-		node.Transitions = append(node.Transitions, tr)
+		node.Transitions = append(node.Transitions, convertTransition(t, eventName))
 	}
 
 	if def.Invoke != nil {

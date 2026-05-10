@@ -1258,6 +1258,58 @@ func TestSCXMLTransitionOrderDeterministic(t *testing.T) {
 	}
 }
 
+// --- 35. Delayed transitions with guards/actions use same logic as regular transitions ---
+
+func TestSCXMLDelayedTransitionWithGuardAndAction(t *testing.T) {
+	m := New[StateID, EventID, Context]("delay_guard_action").
+		Initial("idle").
+		State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.After(500_000_000). // 500ms
+				Guard(func(c Context) bool { return c.Count > 0 }).
+				GuardLabel("hasCount").
+				Assign(func(c Context) Context { c.Count++; return c }).
+				ActionLabel("increment").
+				GoTo("done")
+		}).
+		State("done", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+
+	doc, err := ToSCXML(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idle := nodeByID(doc.Children, "idle")
+	if idle == nil {
+		t.Fatal("idle not found")
+	}
+
+	// Find the delayed transition
+	var delayTr *SCXMLTransition
+	for _, tr := range idle.Transitions {
+		if tr.Event == "_delay.idle" {
+			delayTr = tr
+			break
+		}
+	}
+	if delayTr == nil {
+		t.Fatal("delayed transition not found")
+	}
+
+	if delayTr.Target != "done" {
+		t.Errorf("expected target 'done', got '%s'", delayTr.Target)
+	}
+	if delayTr.Cond != "hasCount" {
+		t.Errorf("expected cond 'hasCount', got '%s'", delayTr.Cond)
+	}
+	if delayTr.Assign == nil || len(delayTr.Assign) == 0 {
+		t.Fatal("expected assign element")
+	}
+	if delayTr.Assign[0].Location != "increment" {
+		t.Errorf("expected location 'increment', got '%s'", delayTr.Assign[0].Location)
+	}
+}
+
 // --- 33. No extra whitespace or attributes ---
 
 func TestSCXMLNoSpuriousAttributes(t *testing.T) {
