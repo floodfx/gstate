@@ -182,7 +182,7 @@ func buildState[S ~string, E ~string, C any](
 
 	// Entry/exit notes
 	if len(def.Entry) > 0 && len(def.Exit) > 0 {
-		s.AddNote("entry / action\nexit / action", md.NoteLeft)
+		s.AddNote("entry / action<br/>exit / action", md.NoteLeft)
 	} else if len(def.Entry) > 0 {
 		s.AddNote("entry / action", md.NoteLeft)
 	} else if len(def.Exit) > 0 {

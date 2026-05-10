@@ -357,6 +357,30 @@ func TestMermaidDefaultConfig(t *testing.T) {
 	assertContains(t, got, "fontSize: 16")
 }
 
+// --- 18. Multiline notes use <br/> not newlines ---
+
+func TestMermaidNoteNoRawNewline(t *testing.T) {
+	m := New[StateID, EventID, Context]("actions").
+		Initial("s").
+		State("s", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Entry(func(c Context) Context { return c })
+			s.Exit(func(c Context) Context { return c })
+		}).
+		Build()
+
+	got := ToMermaid(m)
+
+	// The note text must use <br/> for line breaks, not literal newlines.
+	// A raw newline after "note ... of ...:" causes Mermaid to parse the
+	// second line as a new statement, creating phantom states.
+	assertContains(t, got, "entry / action<br/>exit / action")
+
+	// Must NOT contain a raw newline between entry and exit in the note
+	if strings.Contains(got, "entry / action\nexit / action") {
+		t.Error("note should use <br/> not raw newline between entry and exit")
+	}
+}
+
 // --- helpers ---
 
 func assertContains(t *testing.T, got, want string) {
