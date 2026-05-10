@@ -1221,6 +1221,8 @@ func TestSCXMLValidXML(t *testing.T) {
 // --- 34. Transition ordering is deterministic (sorted by event name) ---
 
 func TestSCXMLTransitionOrderDeterministic(t *testing.T) {
+	// Events declared in this order: ZEBRA, ALPHA, MIDDLE
+	// They must appear in SCXML output in declaration order.
 	m := New[StateID, EventID, Context]("order_test").
 		Initial("s").
 		State("s", func(s *StateBuilder[StateID, EventID, Context]) {
@@ -1230,7 +1232,7 @@ func TestSCXMLTransitionOrderDeterministic(t *testing.T) {
 		}).
 		Build()
 
-	// Run multiple times to catch non-determinism
+	// Run multiple times to confirm determinism
 	for i := 0; i < 20; i++ {
 		doc, err := ToSCXML(m)
 		if err != nil {
@@ -1242,15 +1244,15 @@ func TestSCXMLTransitionOrderDeterministic(t *testing.T) {
 			t.Fatalf("expected 3 transitions, got %d", len(s.Transitions))
 		}
 
-		// Transitions should be sorted alphabetically by event name
-		if s.Transitions[0].Event != "ALPHA" {
-			t.Errorf("iteration %d: expected first transition event ALPHA, got %s", i, s.Transitions[0].Event)
+		// Transitions should preserve declaration order
+		if s.Transitions[0].Event != "ZEBRA" {
+			t.Errorf("iteration %d: expected first transition event ZEBRA, got %s", i, s.Transitions[0].Event)
 		}
-		if s.Transitions[1].Event != "MIDDLE" {
-			t.Errorf("iteration %d: expected second transition event MIDDLE, got %s", i, s.Transitions[1].Event)
+		if s.Transitions[1].Event != "ALPHA" {
+			t.Errorf("iteration %d: expected second transition event ALPHA, got %s", i, s.Transitions[1].Event)
 		}
-		if s.Transitions[2].Event != "ZEBRA" {
-			t.Errorf("iteration %d: expected third transition event ZEBRA, got %s", i, s.Transitions[2].Event)
+		if s.Transitions[2].Event != "MIDDLE" {
+			t.Errorf("iteration %d: expected third transition event MIDDLE, got %s", i, s.Transitions[2].Event)
 		}
 	}
 }
@@ -1549,3 +1551,4 @@ func TestSCXMLNoSpuriousAttributes(t *testing.T) {
 		t.Errorf("expected at most 1 xmlns declaration, got %d", occurrences)
 	}
 }
+

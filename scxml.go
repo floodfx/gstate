@@ -317,15 +317,8 @@ func convertStateNode[S ~string, E ~string, C any](def *StateDef[S, E, C], m *Ma
 		node.OnExit = &SCXMLOnExit{}
 	}
 
-	// Sort events alphabetically for deterministic output
-	events := make([]E, 0, len(def.Transitions))
-	for event := range def.Transitions {
-		events = append(events, event)
-	}
-	sort.Slice(events, func(i, j int) bool {
-		return string(events[i]) < string(events[j])
-	})
-	for _, event := range events {
+	// Use EventOrder to preserve declaration order of transitions
+	for _, event := range def.EventOrder {
 		for _, t := range def.Transitions[event] {
 			node.Transitions = append(node.Transitions, convertTransition(t, string(event)))
 		}
