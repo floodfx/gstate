@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- Helper: parse SCXML string back to a document for structural assertions ---
@@ -1478,6 +1479,52 @@ func TestSCXMLAssignEmptyLocationOmitted(t *testing.T) {
 	}
 	if strings.Contains(xmlStr, `location=""`) {
 		t.Errorf("should not emit empty location attribute, got:\n%s", xmlStr)
+	}
+}
+
+// --- 39. formatDuration produces SCXML-compatible millisecond durations ---
+
+func TestSCXMLFormatDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		want     string
+	}{
+		{"zero", 0, "0ms"},
+		{"500ms", 500 * time.Millisecond, "500ms"},
+		{"1s", time.Second, "1000ms"},
+		{"1.5s", 1500 * time.Millisecond, "1500ms"},
+		{"1m30s", 90 * time.Second, "90000ms"},
+		{"100ms", 100 * time.Millisecond, "100ms"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatDuration(tc.duration)
+			if got != tc.want {
+				t.Errorf("formatDuration(%v) = %q, want %q", tc.duration, got, tc.want)
+			}
+		})
+	}
+}
+
+// Test that delay attribute in SCXML output uses milliseconds
+func TestSCXMLDelayedUsesMilliseconds(t *testing.T) {
+	m := New[StateID, EventID, Context]("delay_ms").
+		Initial("idle").
+		State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.After(1500 * time.Millisecond).GoTo("done")
+		}).
+		State("done", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+
+	xmlStr, err := ToSCXMLString(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(xmlStr, `delay="1500ms"`) {
+		t.Errorf("expected delay=\"1500ms\" in SCXML output, got:\n%s", xmlStr)
 	}
 }
 

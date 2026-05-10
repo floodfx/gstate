@@ -426,7 +426,9 @@ func sortedChildren[S ~string, E ~string, C any](def *StateDef[S, E, C]) []*Stat
 	return result
 }
 
-func formatDuration(d time.Duration) string { return d.String() }
+func formatDuration(d time.Duration) string {
+	return fmt.Sprintf("%dms", d.Milliseconds())
+}
 
 // ToSCXMLString converts a Machine to a pretty-printed SCXML string.
 func ToSCXMLString[S ~string, E ~string, C any](m *Machine[S, E, C]) (string, error) {
