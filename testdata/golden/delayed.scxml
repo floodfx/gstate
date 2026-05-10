@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="delayed" initial="idle">
+  <state id="idle">
+    <onentry>
+      <send event="_delay.idle" delay="0ms"></send>
+    </onentry>
+    <transition event="_delay.idle" target="timeout"></transition>
+  </state>
+  <state id="timeout"></state>
+</scxml>
