@@ -370,6 +370,7 @@ func convertStateNode[S ~string, E ~string, C any](def *StateDef[S, E, C], m *Ma
 			}
 			node.Children = append(node.Children, SCXMLNode{
 				Kind:        NodeHistory,
+				ID:          string(def.ID) + ".hist",
 				HistoryMode: ht,
 			})
 		}
