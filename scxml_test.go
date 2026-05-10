@@ -278,20 +278,16 @@ func TestSCXMLParallelStates(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// The "active" node should itself be a <parallel> element
 	active := nodeByID(doc.Children, "active")
 	if active == nil {
 		t.Fatal("active not found")
 	}
-
-	parallelNodes := collectNodesByKind(active.Children, NodeParallel)
-	if len(parallelNodes) != 1 {
-		t.Fatalf("expected 1 parallel element, got %d", len(parallelNodes))
-	}
-	if !parallelNodes[0].IsParallel() {
-		t.Error("expected IsParallel() to return true")
+	if !active.IsParallel() {
+		t.Errorf("expected active to be <parallel>, got <%s>", active.Kind)
 	}
 
-	regions := collectDirectNodesByKind(parallelNodes[0].Children, NodeState)
+	regions := collectDirectNodesByKind(active.Children, NodeState)
 	if len(regions) != 2 {
 		t.Fatalf("expected 2 regions, got %d", len(regions))
 	}
@@ -300,8 +296,8 @@ func TestSCXMLParallelStates(t *testing.T) {
 		t.Errorf("region IDs mismatch: %s, %s", regions[0].ID, regions[1].ID)
 	}
 
-	r1a := nodeByID(parallelNodes[0].Children, "r1a")
-	r2a := nodeByID(parallelNodes[0].Children, "r2a")
+	r1a := nodeByID(active.Children, "r1a")
+	r2a := nodeByID(active.Children, "r2a")
 	if r1a == nil || r2a == nil {
 		t.Error("region leaf states not found")
 	}
@@ -922,15 +918,15 @@ func TestSCXMLParallelInCompound(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// "child" should be a <parallel> node directly within "parent"
 	child := nodeByID(doc.Children, "child")
 	if child == nil {
 		t.Fatal("child not found")
 	}
-	parNodes := collectDirectNodesByKind(child.Children, NodeParallel)
-	if len(parNodes) != 1 {
-		t.Fatalf("expected 1 parallel element, got %d", len(parNodes))
+	if child.Kind != NodeParallel {
+		t.Errorf("expected <parallel>, got <%s>", child.Kind)
 	}
-	regions := collectDirectNodesByKind(parNodes[0].Children, NodeState)
+	regions := collectDirectNodesByKind(child.Children, NodeState)
 	if len(regions) != 2 {
 		t.Fatalf("expected 2 regions, got %d", len(regions))
 	}
@@ -1350,6 +1346,101 @@ func TestSCXMLHistoryNodeHasID(t *testing.T) {
 	}
 	if !strings.Contains(xmlStr, `id="parent.hist"`) {
 		t.Errorf("expected id attribute in history XML, got:\n%s", xmlStr)
+	}
+}
+
+// --- 37. Parallel states emit <parallel> directly, not wrapped in <state> ---
+
+func TestSCXMLParallelEmitsDirect(t *testing.T) {
+	m := New[StateID, EventID, Context]("par_direct").
+		Initial("active").
+		State("active", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Type(Parallel)
+			s.State("r1", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Initial("r1a")
+				s.State("r1a", func(s *StateBuilder[StateID, EventID, Context]) {})
+			})
+			s.State("r2", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Initial("r2a")
+				s.State("r2a", func(s *StateBuilder[StateID, EventID, Context]) {})
+			})
+		}).
+		Build()
+
+	doc, err := ToSCXML(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The top-level child should be a <parallel> node directly, not a <state> wrapping a <parallel>
+	if len(doc.Children) != 1 {
+		t.Fatalf("expected 1 top-level child, got %d", len(doc.Children))
+	}
+
+	top := doc.Children[0]
+	if top.Kind != NodeParallel {
+		t.Errorf("expected top-level node to be <parallel>, got <%s>", top.Kind)
+	}
+	if top.ID != "active" {
+		t.Errorf("expected id 'active', got '%s'", top.ID)
+	}
+
+	// Should have 2 region children
+	regions := collectDirectNodesByKind(top.Children, NodeState)
+	if len(regions) != 2 {
+		t.Fatalf("expected 2 regions as direct children, got %d", len(regions))
+	}
+
+	// Verify XML output doesn't have <state id="active"><parallel>...</parallel></state>
+	xmlStr, err := ToSCXMLString(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(xmlStr, `<state id="active">`) {
+		t.Errorf("should not wrap parallel in <state>, got:\n%s", xmlStr)
+	}
+	if !strings.Contains(xmlStr, `<parallel id="active">`) {
+		t.Errorf("expected <parallel id=\"active\">, got:\n%s", xmlStr)
+	}
+}
+
+// Test parallel with transitions, entry, exit
+func TestSCXMLParallelWithTransitionsAndActions(t *testing.T) {
+	m := New[StateID, EventID, Context]("par_full").
+		Initial("active").
+		State("active", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Type(Parallel)
+			s.Entry(func(c Context) Context { return c })
+			s.Exit(func(c Context) Context { return c })
+			s.On("STOP").GoTo("done")
+			s.State("r1", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Initial("r1a")
+				s.State("r1a", func(s *StateBuilder[StateID, EventID, Context]) {})
+			})
+		}).
+		State("done", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+
+	doc, err := ToSCXML(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	active := nodeByID(doc.Children, "active")
+	if active == nil {
+		t.Fatal("active not found")
+	}
+	if active.Kind != NodeParallel {
+		t.Errorf("expected <parallel>, got <%s>", active.Kind)
+	}
+	if active.OnEntry == nil {
+		t.Error("expected <onentry> on parallel node")
+	}
+	if active.OnExit == nil {
+		t.Error("expected <onexit> on parallel node")
+	}
+	if len(active.Transitions) == 0 {
+		t.Error("expected transitions on parallel node")
 	}
 }
 
