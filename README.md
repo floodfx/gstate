@@ -360,6 +360,71 @@ A `Snapshot` contains:
 
 ---
 
+## Visualization & Export
+
+`gstate` can export machine definitions to standard diagram formats for documentation, debugging, and visualization.
+
+### Mermaid Diagrams
+
+[`ToMermaid`](https://pkg.go.dev/github.com/floodfx/gstate#ToMermaid) converts a machine to a [Mermaid stateDiagram-v2](https://mermaid.js.org/syntax/stateDiagram.html) string. The output renders natively on GitHub, GitLab, and any Mermaid-compatible viewer.
+
+```go
+fmt.Println(gstate.ToMermaid(machine))
+```
+
+Optional configuration via functional options:
+
+```go
+// Custom theme and title
+gstate.ToMermaid(machine,
+    gstate.MermaidTheme(gstate.MermaidThemeDark),
+    gstate.MermaidTitle("My Workflow"),
+    gstate.MermaidFontSize(20),
+)
+```
+
+**Available themes:** `MermaidThemeDefault`, `MermaidThemeNeutral`, `MermaidThemeDark`, `MermaidThemeForest`, `MermaidThemeBase`
+
+Embed directly in a README with a fenced code block:
+
+````markdown
+```mermaid
+<output of ToMermaid(machine)>
+```
+````
+
+### SCXML Export
+
+[`ToSCXMLString`](https://pkg.go.dev/github.com/floodfx/gstate#ToSCXMLString) converts a machine to a [W3C SCXML](https://www.w3.org/TR/scxml/) document. This enables interop with SCXML-compatible tools and runtimes.
+
+```go
+xml, err := gstate.ToSCXMLString(machine)
+```
+
+Also available:
+- `ToSCXML(m)` — returns a structured `*SCXMLDocument`
+- `ToSCXMLBytes(m)` — returns `[]byte` with XML header
+
+#### What is exported
+
+| Feature | Mermaid | SCXML |
+|---------|---------|-------|
+| States & transitions | ✓ | ✓ |
+| Nested (compound) states | ✓ | ✓ |
+| Parallel states | ✓ (fork/join) | ✓ (`<parallel>`) |
+| Initial states | ✓ | ✓ |
+| Final states | ✓ | ✓ |
+| Guards (with labels) | ✓ | ✓ (`cond`) |
+| Entry/exit actions | ✓ (notes) | ✓ |
+| Delayed transitions | ✓ | ✓ (`<send>` + `after.*`) |
+| History (shallow/deep) | ✓ (notes) | ✓ (`<history>`) |
+| Invoke (onDone/onError) | ✓ | ✓ |
+| Action labels | ✓ | ✓ (`<assign>`) |
+
+> **Note:** Export captures the static structure of a machine definition. Runtime behavior (Go functions for guards, actions, invocations) cannot be serialized — labels are used as descriptive placeholders.
+
+---
+
 ## System Architecture & Concurrency
 
 `gstate` uses a hybrid concurrency model to ensure safety and performance:
