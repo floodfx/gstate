@@ -22,6 +22,29 @@ stateDiagram-v2
 	idle --> active: START
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="counter" initial="idle">
+  <state id="active">
+    <onentry></onentry>
+    <onexit></onexit>
+    <transition event="STOP" target="idle"></transition>
+  </state>
+  <state id="idle">
+    <transition event="INCREMENT">
+      <assign location="incrementCount"></assign>
+    </transition>
+    <transition event="START" target="active"></transition>
+  </state>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 1. The machine starts in **idle** with `Count: 0`.

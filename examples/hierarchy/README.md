@@ -30,6 +30,34 @@ stateDiagram-v2
 	child2 --> child1: TO_CHILD1
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="hierarchy" initial="parent">
+  <final id="done"></final>
+  <state id="parent" initial="child1">
+    <onentry></onentry>
+    <onexit></onexit>
+    <transition event="EXIT_ALL" target="done"></transition>
+    <state id="child1">
+      <onentry></onentry>
+      <onexit></onexit>
+      <transition event="TO_CHILD2" target="child2"></transition>
+    </state>
+    <state id="child2">
+      <onentry></onentry>
+      <onexit></onexit>
+      <transition event="TO_CHILD1" target="child1"></transition>
+    </state>
+  </state>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 1. **Start → `parent` → `child1`:** The machine enters `parent` first, firing its entry action, then descends into the initial child `child1` and fires that entry action. The active states stack is `[parent, child1]`.

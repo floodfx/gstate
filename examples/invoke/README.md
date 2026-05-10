@@ -26,6 +26,27 @@ stateDiagram-v2
 	loading --> error: error
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="service_manager" initial="loading">
+  <final id="error"></final>
+  <state id="idle"></state>
+  <state id="loading">
+    <transition event="CANCEL" target="idle"></transition>
+    <transition event="done.invoke.loading" target="success"></transition>
+    <transition event="error.platform" target="error"></transition>
+    <invoke id="loading"></invoke>
+  </state>
+  <final id="success"></final>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 **Case 1 — Completion.** The machine starts in `loading`, which spawns a goroutine that simulates 100 ms of work. After the work finishes the goroutine returns `nil`, triggering the `onDone` path. The machine transitions to `success`, a final state.

@@ -33,6 +33,40 @@ stateDiagram-v2
 	verifying --> done: PASS
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="agent" initial="investigating">
+  <state id="approving">
+    <transition event="YES" target="fixing"></transition>
+    <transition event="NO" target="done"></transition>
+  </state>
+  <final id="done">
+    <onentry></onentry>
+  </final>
+  <state id="fixing">
+    <transition event="SUCCESS" target="verifying"></transition>
+    <transition event="RETRY" target="investigating"></transition>
+    <transition cond="maxAttempts" target="done"></transition>
+  </state>
+  <state id="investigating">
+    <transition event="done.invoke.investigating" target="approving"></transition>
+    <transition event="error.platform" target="done"></transition>
+    <invoke id="investigating"></invoke>
+  </state>
+  <state id="verifying">
+    <transition event="FAIL" cond="canRetry" target="fixing"></transition>
+    <transition event="FAIL" target="done"></transition>
+    <transition event="PASS" target="done"></transition>
+  </state>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 The agent starts in **investigating**, which fires an async `Invoke` to run diagnostics. When the invocation completes, the `done.invoke` event moves the agent to **approving**. A simulated controller sends `YES`, advancing to **fixing**.
