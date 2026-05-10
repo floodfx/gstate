@@ -410,11 +410,7 @@ func convertTransition[S ~string, E ~string, C any](t *TransitionDef[S, E, C], e
 		}
 	}
 	if t.Action != nil {
-		loc := ""
-		if t.ActionName != "" {
-			loc = t.ActionName
-		}
-		tr.Assign = []*SCXMLAssign{{Location: loc}}
+		tr.Assign = []*SCXMLAssign{{Location: t.ActionName}}
 	}
 	return tr
 }

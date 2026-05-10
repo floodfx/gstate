@@ -1444,6 +1444,43 @@ func TestSCXMLParallelWithTransitionsAndActions(t *testing.T) {
 	}
 }
 
+// --- 38. Empty assign location should not emit location attribute ---
+
+func TestSCXMLAssignEmptyLocationOmitted(t *testing.T) {
+	m := New[StateID, EventID, Context]("assign_empty").
+		Initial("idle").
+		State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
+			// Action with no label — should produce <assign/> without location attr
+			s.On("GO").Assign(func(c Context) Context { return c }).GoTo("idle")
+		}).
+		Build()
+
+	doc, err := ToSCXML(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idle := nodeByID(doc.Children, "idle")
+	tr := idle.Transitions[0]
+	if tr.Assign == nil || len(tr.Assign) == 0 {
+		t.Fatal("expected assign element")
+	}
+
+	// Location should be empty string (omitempty will handle XML output)
+	if tr.Assign[0].Location != "" {
+		t.Errorf("expected empty location, got '%s'", tr.Assign[0].Location)
+	}
+
+	// Verify the XML output doesn't contain location=""
+	xmlStr, err := ToSCXMLString(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(xmlStr, `location=""`) {
+		t.Errorf("should not emit empty location attribute, got:\n%s", xmlStr)
+	}
+}
+
 // --- 33. No extra whitespace or attributes ---
 
 func TestSCXMLNoSpuriousAttributes(t *testing.T) {
