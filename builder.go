@@ -137,7 +137,7 @@ func (s *StateBuilder[S, E, C]) History(t HistoryType) {
 func (s *StateBuilder[S, E, C]) On(event E) *TransitionBuilder[S, E, C] {
 	t := &TransitionBuilder[S, E, C]{}
 	if _, exists := s.state.Transitions[event]; !exists {
-		s.state.EventOrder = append(s.state.EventOrder, event)
+		s.state.eventOrder = append(s.state.eventOrder, event)
 	}
 	s.state.Transitions[event] = append(s.state.Transitions[event], &t.def)
 	return t
