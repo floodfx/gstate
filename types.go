@@ -34,75 +34,78 @@ const (
 	Deep
 )
 
-// Machine is the static definition of a statechart.
-// It acts as a blueprint for creating Actor instances.
-// S = StateID type, E = EventID type, C = Context type.
+// Machine is the static, immutable definition of a statechart.
+// It serves as a blueprint for creating [Actor] instances.
 type Machine[S ~string, E ~string, C any] struct {
-	// ID is a unique identifier for the machine.
+	// ID identifies this machine definition.
 	ID string
-	// Initial is the ID of the state to enter when the machine starts.
+	// Initial is the state to enter when the machine starts.
 	Initial S
-	// States is a flat map of all states in the machine for efficient lookup.
+	// States is a flat map of every state (including nested) for O(1) lookup.
 	States map[S]*StateDef[S, E, C]
 }
 
 // StateDef defines the properties and behavior of a single state in the machine.
 type StateDef[S ~string, E ~string, C any] struct {
-	// ID is the unique identifier for this state.
+	// ID uniquely identifies this state within the machine.
 	ID S
-	// Type determines if the state is Atomic, Compound, Parallel, or Final.
+	// Type is the kind of state: Atomic, Compound, Parallel, or Final.
 	Type StateType
-	// Initial is the child state to enter by default (only for Compound states).
+	// Initial is the default child state to enter for Compound states.
 	Initial S
-	// Parent is the ID of the parent state, if any.
-	Parent S
-	// Depth is the pre-computed distance from the root state.
-	Depth int
-	// Path is the pre-computed slice of ancestor IDs from root to this state.
-	Path []S
-	// States is the map of direct child states.
+	// States maps child state IDs to their definitions.
 	States map[S]*StateDef[S, E, C]
-	// Transitions is a map of events to their corresponding transition definitions.
+	// Transitions maps event IDs to ordered transition definitions.
+	// The first transition whose guard passes (or has no guard) fires.
 	Transitions map[E][]*TransitionDef[S, E, C]
-	// eventOrder preserves the declaration order of transition events.
-	eventOrder []E
-	// Always defines transient transitions that fire immediately when guards are met.
+	// Always holds eventless transitions evaluated on state entry in declaration order.
 	Always []*TransitionDef[S, E, C]
-	// Delayed defines transitions that fire after a specific duration of time.
+	// Delayed holds time-based transitions that fire after their After duration.
 	Delayed []*TransitionDef[S, E, C]
-	// Entry is a list of functions called when entering this state.
+	// Entry holds functions called in order when entering this state.
 	Entry []func(C) C
-	// Exit is a list of functions called when leaving this state.
+	// Exit holds functions called in order when leaving this state.
 	Exit []func(C) C
-	// Invoke defines an asynchronous service to be managed during the state's lifecycle.
+	// Invoke defines an async service started on entry and cancelled on exit.
 	Invoke *InvokeDef[S, E, C]
-	// History specifies the type of history tracking for this state.
+	// History controls history tracking: None, Shallow, or Deep.
 	History HistoryType
+
+	// parent is the ID of the enclosing state, or zero for top-level states.
+	parent S
+	// depth is the distance from the root, used for LCA calculation.
+	depth int
+	// path is the ancestor chain from root to this state, inclusive.
+	path []S
+	// eventOrder tracks declaration order of transition event keys.
+	eventOrder []E
 }
 
 // TransitionDef defines the rules for moving from one state to another.
 type TransitionDef[S ~string, E ~string, C any] struct {
-	// Target is the ID of the state to transition to.
+	// Target is the state to transition to.
 	Target S
-	// Guard is an optional condition that must be true for the transition to fire.
+	// Guard is an optional predicate that must return true for the transition to fire.
 	Guard func(C) bool
-	// GuardName is an optional label describing the guard.
-	GuardName string
-	// Action (Assign) is a pure function that updates the context during the transition.
+	// Action is a pure function that updates the context during the transition.
 	Action func(C) C
-	// ActionName is an optional label describing the action.
-	ActionName string
-	// After is the duration to wait before a delayed transition fires.
+	// After is the delay before a timed transition fires.
 	After time.Duration
+
+	// guardName is a human-readable label for the guard, used in SCXML export.
+	guardName string
+	// actionName is a human-readable label for the action, used in SCXML export.
+	actionName string
 }
 
-// InvokeDef defines an asynchronous service launched on state entry.
+// InvokeDef defines an asynchronous service managed during a state's lifecycle.
+// The service is started in a goroutine on state entry and cancelled on exit.
 type InvokeDef[S ~string, E ~string, C any] struct {
-	// Src is the function to execute in a separate goroutine.
+	// Src is the function to run. It receives a context that is cancelled on state exit.
 	Src func(context.Context, C) error
-	// OnDone is the state to transition to if Src returns nil.
+	// OnDone is the target state when Src returns nil.
 	OnDone S
-	// OnError is the state to transition to if Src returns an error.
+	// OnError is the target state when Src returns a non-nil error.
 	OnError S
 }
 
@@ -112,14 +115,13 @@ type Cloner[C any] interface {
 	Clone() C
 }
 
-// Snapshot represents a serializable point-in-time state of an Actor.
+// Snapshot is a serializable point-in-time capture of an [Actor]'s state.
 type Snapshot[S ~string, C any] struct {
-	// Active is the list of currently active state IDs.
+	// Active lists the currently active state IDs.
 	Active []S `json:"active"`
-	// History is a map of parent states to their last active child states.
+	// History maps compound state IDs to their last active child.
 	History map[S]S `json:"history"`
-	// Context is the current state of the machine's data.
-	// Note: If C contains reference types (pointers, slices, maps), ensure they are
-	// handled safely during serialization or implement the Cloner interface.
+	// Context is the current data. If C contains reference types,
+	// implement [Cloner] for safe deep-copying.
 	Context C `json:"context"`
 }

@@ -258,7 +258,7 @@ func ToSCXML[S ~string, E ~string, C any](m *Machine[S, E, C]) (*SCXMLDocument, 
 
 	topLevel := make([]*StateDef[S, E, C], 0)
 	for _, s := range m.States {
-		if s.Parent == "" {
+		if s.parent == "" {
 			topLevel = append(topLevel, s)
 		}
 	}
@@ -396,14 +396,14 @@ func convertFinalNode[S ~string, E ~string, C any](def *StateDef[S, E, C], m *Ma
 func convertTransition[S ~string, E ~string, C any](t *TransitionDef[S, E, C], event string) *SCXMLTransition {
 	tr := &SCXMLTransition{Event: event, Target: string(t.Target)}
 	if t.Guard != nil {
-		if t.GuardName != "" {
-			tr.Cond = t.GuardName
+		if t.guardName != "" {
+			tr.Cond = t.guardName
 		} else {
 			tr.Cond = "guard"
 		}
 	}
 	if t.Action != nil {
-		tr.Assign = []*SCXMLAssign{{Location: t.ActionName}}
+		tr.Assign = []*SCXMLAssign{{Location: t.actionName}}
 	}
 	return tr
 }
