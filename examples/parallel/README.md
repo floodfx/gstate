@@ -39,6 +39,36 @@ stateDiagram-v2
 	not_clicked --> clicked: CLICK
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="input_system" initial="active">
+  <parallel id="active">
+    <state id="keyboard" initial="caps_off">
+      <state id="caps_off">
+        <transition event="CAPS_LOCK" target="caps_on"></transition>
+      </state>
+      <state id="caps_on">
+        <transition event="CAPS_LOCK" target="caps_off"></transition>
+      </state>
+    </state>
+    <state id="mouse" initial="not_clicked">
+      <state id="clicked">
+        <transition event="RELEASE" target="not_clicked"></transition>
+      </state>
+      <state id="not_clicked">
+        <transition event="CLICK" target="clicked"></transition>
+      </state>
+    </state>
+  </parallel>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 When the actor starts, it enters the `active` parallel state, which activates both the `keyboard` and `mouse` regions at the same time. The keyboard begins in `caps_off` and the mouse begins in `not_clicked`.

@@ -23,6 +23,25 @@ stateDiagram-v2
 	two --> three: FINISH
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="persistence_demo" initial="one">
+  <state id="one">
+    <transition event="NEXT" target="two"></transition>
+  </state>
+  <final id="three"></final>
+  <state id="two">
+    <transition event="FINISH" target="three"></transition>
+  </state>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 The actor starts in state **one**. Sending `NEXT` transitions it to **two** and sets the context value to `"step1_complete"`. At this point `Snapshot()` captures the active states, history, and context as a JSON blob, which is printed to the console.

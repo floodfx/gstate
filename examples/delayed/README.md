@@ -26,6 +26,27 @@ stateDiagram-v2
 	waiting --> timeout: after 100ms
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="timeout_demo" initial="waiting">
+  <state id="other_state"></state>
+  <state id="timeout"></state>
+  <state id="waiting">
+    <onentry>
+      <send event="_delay.waiting" delay="100ms"></send>
+    </onentry>
+    <transition event="USER_ACTION" target="other_state"></transition>
+    <transition event="_delay.waiting" target="timeout"></transition>
+  </state>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 **Case 1 — Timeout fires.** The machine enters `waiting` and the 100ms

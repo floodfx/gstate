@@ -28,6 +28,31 @@ stateDiagram-v2
 	idle --> app: WAKE
 ```
 
+
+<details>
+<summary>SCXML</summary>
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="history_demo" initial="app">
+  <state id="app" initial="screen1">
+    <transition event="GO_IDLE" target="idle"></transition>
+    <history id="app.hist" type="shallow"></history>
+    <state id="screen1">
+      <transition event="SWITCH" target="screen2"></transition>
+    </state>
+    <state id="screen2">
+      <transition event="SWITCH" target="screen1"></transition>
+    </state>
+  </state>
+  <state id="idle">
+    <transition event="WAKE" target="app"></transition>
+  </state>
+</scxml>
+```
+
+</details>
+
 ## What Happens
 
 The app starts in `screen1`, the initial child of `app`. You fire `SWITCH` and land on `screen2`. Then `GO_IDLE` pulls you out of `app` entirely and into the `idle` state — `app` is fully exited, children and all.
