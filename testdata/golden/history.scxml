@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="history" initial="parent">
+  <state id="other">
+    <transition event="BACK" target="parent"></transition>
+  </state>
+  <state id="parent" initial="s1">
+    <transition event="GO_AWAY" target="other"></transition>
+    <history id="parent.hist" type="shallow"></history>
+    <state id="s1">
+      <transition event="TO_S2" target="s2"></transition>
+    </state>
+    <state id="s2"></state>
+  </state>
+</scxml>

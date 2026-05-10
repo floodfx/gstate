@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="counter" initial="idle">
+  <state id="active">
+    <transition event="STOP" target="idle"></transition>
+  </state>
+  <state id="idle">
+    <transition event="START" target="active"></transition>
+  </state>
+</scxml>
