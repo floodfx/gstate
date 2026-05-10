@@ -1,12 +1,6 @@
 # Hierarchy
 
-Demonstrates **nested (compound) states**, event bubbling, and shared
-entry/exit actions using the `gstate` statechart library.
-
-A `parent` state contains two children (`child1`, `child2`). Events bubble
-up the hierarchy, so `EXIT_ALL` is handled by the parent even when the
-machine is in `child2`. Entry and exit actions on `parent` fire whenever a
-child transition crosses the parent boundary.
+This example demonstrates nested (compound) states, where a **parent** state contains two child screens (`child1` and `child2`). You can switch between children freely, while the parent remains active and holds shared lifecycle logic. When an `EXIT_ALL` event fires from any child, it bubbles up to the parent — which transitions the entire hierarchy to a `done` final state, showing how events propagate upward through the state tree.
 
 ## State Diagram
 
@@ -36,17 +30,36 @@ stateDiagram-v2
 	child2 --> child1: TO_CHILD1
 ```
 
-## Key Concepts
+## What Happens
 
-- **Compound states** – `parent` declares an `Initial` child (`child1`),
-  entered automatically when the machine transitions into `parent`.
-- **Event bubbling** – `EXIT_ALL` is defined on `parent`, yet it triggers
-  even when the active state is `child2`.
-- **Entry/exit actions** – actions on `parent` run whenever a transition
-  enters or leaves the compound state; child actions run on each internal
-  transition.
-- **`States()` returns the full path** from the root to the current leaf,
-  e.g. `["parent", "child1"]`.
+1. **Start → `parent` → `child1`:** The machine enters `parent` first, firing its entry action, then descends into the initial child `child1` and fires that entry action. The active states stack is `[parent, child1]`.
+2. **`TO_CHILD2`:** `child1` handles the event directly — its exit action fires, then `child2`'s entry action fires. The parent stays active throughout because only the leaf state changed. Stack becomes `[parent, child2]`.
+3. **`EXIT_ALL`:** `child2` has no handler for this event, so it **bubbles up** to `parent`. The parent does handle it: `child2`'s exit action fires first (innermost out), then the parent's exit action fires, and the machine transitions to the `done` final state.
+
+## When To Use This
+
+- **Wizard / multi-step forms** — each step is a child state; the parent holds shared header, footer, or validation logic that persists across steps.
+- **Game screens** — menu, playing, and paused states live inside a game-session parent that manages resources common to all screens.
+- **Document editors** — editing, reviewing, and commenting are substates of an "open document" parent that tracks unsaved changes and file handles.
+
+## Output
+
+```
+--- Starting Actor ---
+[parent] Entering...
+  [child1] Entering...
+Initial States Stack: [parent child1]
+
+--- Sending 'TO_CHILD2' ---
+  [child1] Exiting...
+  [child2] Entering...
+States Stack: [parent child2]
+
+--- Sending 'EXIT_ALL' (Bubbles to Parent) ---
+  [child2] Exiting...
+[parent] Exiting...
+States Stack: [done]
+```
 
 ## Running
 
