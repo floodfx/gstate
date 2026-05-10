@@ -1310,6 +1310,49 @@ func TestSCXMLDelayedTransitionWithGuardAndAction(t *testing.T) {
 	}
 }
 
+// --- 36. History nodes should have an ID ---
+
+func TestSCXMLHistoryNodeHasID(t *testing.T) {
+	m := New[StateID, EventID, Context]("hist_id").
+		Initial("parent").
+		State("parent", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Initial("s1")
+			s.History(Shallow)
+			s.State("s1", func(s *StateBuilder[StateID, EventID, Context]) {})
+			s.State("s2", func(s *StateBuilder[StateID, EventID, Context]) {})
+		}).
+		Build()
+
+	doc, err := ToSCXML(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parent := nodeByID(doc.Children, "parent")
+	if parent == nil {
+		t.Fatal("parent not found")
+	}
+
+	histNodes := collectNodesByKind(parent.Children, NodeHistory)
+	if len(histNodes) != 1 {
+		t.Fatalf("expected 1 history node, got %d", len(histNodes))
+	}
+
+	// SCXML spec requires history nodes to have an ID
+	if histNodes[0].ID != "parent.hist" {
+		t.Errorf("expected history ID 'parent.hist', got '%s'", histNodes[0].ID)
+	}
+
+	// Verify it appears in the XML output
+	xmlStr, err := ToSCXMLString(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(xmlStr, `id="parent.hist"`) {
+		t.Errorf("expected id attribute in history XML, got:\n%s", xmlStr)
+	}
+}
+
 // --- 33. No extra whitespace or attributes ---
 
 func TestSCXMLNoSpuriousAttributes(t *testing.T) {
