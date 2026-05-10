@@ -64,8 +64,8 @@ type StateDef[S ~string, E ~string, C any] struct {
 	States map[S]*StateDef[S, E, C]
 	// Transitions is a map of events to their corresponding transition definitions.
 	Transitions map[E][]*TransitionDef[S, E, C]
-	// EventOrder preserves the declaration order of transition events.
-	EventOrder []E
+	// eventOrder preserves the declaration order of transition events.
+	eventOrder []E
 	// Always defines transient transitions that fire immediately when guards are met.
 	Always []*TransitionDef[S, E, C]
 	// Delayed defines transitions that fire after a specific duration of time.

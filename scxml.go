@@ -317,8 +317,8 @@ func convertStateNode[S ~string, E ~string, C any](def *StateDef[S, E, C], m *Ma
 		node.OnExit = &SCXMLOnExit{}
 	}
 
-	// Use EventOrder to preserve declaration order of transitions
-	for _, event := range def.EventOrder {
+	// Use eventOrder to preserve declaration order of transitions
+	for _, event := range def.eventOrder {
 		for _, t := range def.Transitions[event] {
 			node.Transitions = append(node.Transitions, convertTransition(t, string(event)))
 		}
