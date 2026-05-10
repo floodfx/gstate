@@ -52,6 +52,8 @@ machine := gstate.New[MyState, MyEvent, any]("toggle").
     Build()
 ```
 
+> **Try it:** [basics example](./examples/basics) — states, events, transitions, context, and entry/exit actions.
+
 ---
 
 ## 2. Type Safety & Generics
@@ -153,6 +155,8 @@ s.State("parent", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 })
 ```
 
+> **Try it:** [hierarchy example](./examples/hierarchy) — nested states with event bubbling and entry/exit ordering.
+
 ---
 
 ## 6. History States
@@ -186,6 +190,8 @@ machine := gstate.New[MyState, MyEvent, MyContext]("history_demo").
 ```
 
 In this example, if the user navigates to `screen2` and then goes idle, `WAKE` will return them to `screen2` (not the initial `screen1`).
+
+> **Try it:** [history example](./examples/history) — shallow history remembers which child was active.
 
 ---
 
@@ -225,6 +231,8 @@ fmt.Printf("Active States: %v\n", actor.States())
 // Output: Active States: [active keyboard caps_off mouse not_clicked]
 ```
 
+> **Try it:** [parallel example](./examples/parallel) — independent keyboard and mouse regions.
+
 ---
 
 ## 8. Side Effects: Invoke and After
@@ -248,6 +256,8 @@ s.State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
     s.After(5 * time.Second).GoTo("error")
 })
 ```
+
+> **Try it:** [invoke example](./examples/invoke) — async services with cancellation. [delayed example](./examples/delayed) — automatic timeouts.
 
 ---
 
@@ -276,6 +286,8 @@ s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
     s.Type(gstate.Final)
 })
 ```
+
+> **Try it:** [agent example](./examples/agent) — guards, always transitions, retries, and final states in a real workflow.
 
 ---
 
@@ -357,6 +369,8 @@ A `Snapshot` contains:
 - **`Context C`** — the context data
 
 `Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions.
+
+> **Try it:** [persistence example](./examples/persistence) — snapshot to JSON and hydrate a new actor.
 
 ---
 
@@ -443,20 +457,20 @@ Also available:
 - **[W3C SCXML Specification](https://www.w3.org/TR/scxml/)**: The standard for State Chart XML, which defines many of the behaviors (like parallel states and history) implemented in this library.
 - **[XState Documentation](https://xstate.js.org/docs/)**: An excellent resource for learning statechart patterns (the library that inspired `gstate`'s API).
 
-## Detailed Examples
+## Examples
 
-Check the [examples/](./examples) directory for runnable code with deep commentary on every feature:
+Each example has its own README with a Mermaid state diagram, a walkthrough of what happens, real-world use cases, and expected output.
 
-| Example | Feature |
-|---------|---------|
-| [basics](./examples/basics) | States, events, transitions, entry/exit, assign |
-| [hierarchy](./examples/hierarchy) | Nested states and event bubbling |
-| [parallel](./examples/parallel) | Parallel regions and `States()` |
-| [history](./examples/history) | Shallow and deep history |
-| [invoke](./examples/invoke) | Async services with cancellation |
-| [delayed](./examples/delayed) | Time-based transitions with `After` |
-| [agent](./examples/agent) | Complex workflow with guards, always, and invoke |
-| [persistence](./examples/persistence) | Snapshot serialization and hydration |
+| Example | Feature | Use Case |
+|---------|---------|----------|
+| [basics](./examples/basics) | States, transitions, context, entry/exit | Form validation, connection managers |
+| [hierarchy](./examples/hierarchy) | Nested states, event bubbling | Wizards, multi-step flows |
+| [parallel](./examples/parallel) | Orthogonal regions | Media players, independent monitors |
+| [history](./examples/history) | Shallow/deep history | Pause/resume, settings panels |
+| [invoke](./examples/invoke) | Async services, auto-cancellation | API calls, file uploads |
+| [delayed](./examples/delayed) | Time-based transitions | Session timeouts, debouncing |
+| [agent](./examples/agent) | Guards, always, invoke, retries | CI/CD pipelines, automated remediation |
+| [persistence](./examples/persistence) | Snapshot & hydrate | Durable workflows, serverless |
 
 ---
 

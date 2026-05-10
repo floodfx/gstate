@@ -1,6 +1,6 @@
 # Persistence
 
-Save and restore actor state across process restarts using `Snapshot` and `Hydrate`. This example demonstrates durable workflow support by serializing an actor's full state to JSON and reconstructing it in a new process.
+This example models a durable three-step workflow that survives process restarts by serializing its state to JSON and restoring it later. An actor progresses partway through a statechart, gets snapshotted, and a brand-new actor is hydrated from that snapshot — picking up exactly where the first one left off.
 
 ## State Diagram
 
@@ -23,16 +23,50 @@ stateDiagram-v2
 	two --> three: FINISH
 ```
 
-## Key Concepts
+## What Happens
 
-- **`Snapshot()`** captures the actor's active states, history, and context into a serializable struct
-- Snapshots are **JSON-serializable**, making them easy to store in a database or file
-- **`Hydrate()`** creates a new actor in the exact same state as when the snapshot was taken
-- Context must be **JSON-serializable** — use struct tags (e.g., `` `json:"field"` ``) on your context type
-- Enables **durable workflows** that survive process restarts, deployments, or crashes
+The actor starts in state **one**. Sending `NEXT` transitions it to **two** and sets the context value to `"step1_complete"`. At this point `Snapshot()` captures the active states, history, and context as a JSON blob, which is printed to the console.
+
+A new actor is then created with `Hydrate()` using that JSON. It starts directly in state **two** with the context value `"step1_complete"` — no replaying of earlier events required. Sending `FINISH` to the hydrated actor transitions it to the final state **three** and updates the context to `"step2_complete"`, completing the workflow.
+
+Note that the context struct must have `json` struct tags so the snapshot can serialize and deserialize it correctly.
+
+## When To Use This
+
+- **Long-running workflows** — an order-processing pipeline that spans hours or days can checkpoint its progress and resume after a deploy or crash.
+- **Serverless functions** — save state to a database between invocations so each Lambda or Cloud Function picks up where the last one stopped.
+- **User onboarding flows** — persist the current step so users can close their browser and resume exactly where they left off.
+
+## Output
+
+```
+--- Step 1: Start Actor and Trigger a Transition ---
+Serialized Snapshot:
+{
+  "active": [
+    "two"
+  ],
+  "history": {},
+  "context": {
+    "value": "step1_complete"
+  }
+}
+
+--- Step 2: Hydrate a New Actor from the Snapshot ---
+Hydrated State: two
+Hydrated Context: step1_complete
+
+--- Step 3: Continue Workflow from Hydrated Actor ---
+Final State: three
+Final Context: step2_complete
+
+--- Conclusion ---
+Persistence allows you to decouple the machine execution from
+the process lifecycle, enabling durable state charts.
+```
 
 ## Running
 
-```sh
+```bash
 go run .
 ```
