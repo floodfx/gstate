@@ -269,6 +269,94 @@ func TestMermaidEntryExit(t *testing.T) {
 }
 
 
+// --- 13. Options: theme ---
+
+func TestMermaidTheme(t *testing.T) {
+	m := New[StateID, EventID, Context]("toggle").
+		Initial("off").
+		State("off", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("on")
+		}).
+		State("on", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("off")
+		}).
+		Build()
+
+	got := ToMermaid(m, MermaidTheme(MermaidThemeDark))
+	assertContains(t, got, "theme: dark")
+}
+
+// --- 14. Options: title ---
+
+func TestMermaidTitle(t *testing.T) {
+	m := New[StateID, EventID, Context]("toggle").
+		Initial("off").
+		State("off", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("on")
+		}).
+		State("on", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("off")
+		}).
+		Build()
+
+	got := ToMermaid(m, MermaidTitle("Light Switch"))
+	assertContains(t, got, "title: Light Switch")
+}
+
+// --- 15. Options: font size ---
+
+func TestMermaidFontSize(t *testing.T) {
+	m := New[StateID, EventID, Context]("toggle").
+		Initial("off").
+		State("off", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("on")
+		}).
+		State("on", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("off")
+		}).
+		Build()
+
+	got := ToMermaid(m, MermaidFontSize(20))
+	assertContains(t, got, "fontSize: 20")
+}
+
+// --- 16. Options: combine multiple ---
+
+func TestMermaidMultipleOptions(t *testing.T) {
+	m := New[StateID, EventID, Context]("toggle").
+		Initial("off").
+		State("off", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("on")
+		}).
+		State("on", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("off")
+		}).
+		Build()
+
+	got := ToMermaid(m, MermaidTheme(MermaidThemeForest), MermaidTitle("My Machine"))
+	assertContains(t, got, "theme: forest")
+	assertContains(t, got, "title: My Machine")
+	assertContains(t, got, "stateDiagram-v2")
+}
+
+// --- 17. Default config preserved ---
+
+func TestMermaidDefaultConfig(t *testing.T) {
+	m := New[StateID, EventID, Context]("toggle").
+		Initial("off").
+		State("off", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("on")
+		}).
+		State("on", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("FLIP").GoTo("off")
+		}).
+		Build()
+
+	got := ToMermaid(m)
+	assertContains(t, got, "theme: default")
+	assertContains(t, got, "fontSize: 16")
+}
+
 // --- helpers ---
 
 func assertContains(t *testing.T, got, want string) {

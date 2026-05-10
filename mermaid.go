@@ -5,11 +5,73 @@ import (
 	"sort"
 
 	md "github.com/TyphonHill/go-mermaid/diagrams/state"
+	"github.com/TyphonHill/go-mermaid/diagrams/utils/basediagram"
 )
 
+// MermaidThemeName identifies a Mermaid color theme.
+type MermaidThemeName = basediagram.ThemeName
+
+// Mermaid theme constants matching the five built-in Mermaid themes.
+const (
+	MermaidThemeDefault  MermaidThemeName = basediagram.ThemeDefault
+	MermaidThemeNeutral  MermaidThemeName = basediagram.ThemeNeutral
+	MermaidThemeDark     MermaidThemeName = basediagram.ThemeDark
+	MermaidThemeForest   MermaidThemeName = basediagram.ThemeForest
+	MermaidThemeBase     MermaidThemeName = basediagram.ThemeBase
+)
+
+// mermaidConfig holds optional configuration for Mermaid diagram rendering.
+type mermaidConfig struct {
+	theme    *MermaidThemeName
+	title    string
+	fontSize int // 0 means use go-mermaid default (16)
+}
+
+// MermaidOption configures Mermaid diagram output.
+type MermaidOption func(*mermaidConfig)
+
+// MermaidTheme sets the Mermaid color theme (default, neutral, dark, forest, base).
+func MermaidTheme(theme MermaidThemeName) MermaidOption {
+	return func(c *mermaidConfig) {
+		c.theme = &theme
+	}
+}
+
+// MermaidTitle sets the diagram title shown in the frontmatter.
+func MermaidTitle(title string) MermaidOption {
+	return func(c *mermaidConfig) {
+		c.title = title
+	}
+}
+
+// MermaidFontSize sets the base font size in pixels (default 16).
+func MermaidFontSize(size int) MermaidOption {
+	return func(c *mermaidConfig) {
+		c.fontSize = size
+	}
+}
+
 // ToMermaid converts a Machine to a Mermaid stateDiagram-v2 string.
-func ToMermaid[S ~string, E ~string, C any](m *Machine[S, E, C]) string {
+// Options configure the frontmatter (theme, title, fontSize).
+func ToMermaid[S ~string, E ~string, C any](m *Machine[S, E, C], opts ...MermaidOption) string {
+	var cfg mermaidConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	d := md.NewDiagram()
+
+	// Apply options to the diagram's config.
+	if cfg.theme != nil {
+		d.Config.SetTheme(*cfg.theme)
+	}
+	if cfg.title != "" {
+		d.SetTitle(cfg.title)
+	}
+	if cfg.fontSize > 0 {
+		d.Config.SetFontSize(cfg.fontSize)
+	}
+
 	stateMap := map[string]*md.State{}
 
 	topLevel := sortedTopLevel(m)
