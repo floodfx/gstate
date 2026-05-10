@@ -64,6 +64,8 @@ type StateDef[S ~string, E ~string, C any] struct {
 	States map[S]*StateDef[S, E, C]
 	// Transitions is a map of events to their corresponding transition definitions.
 	Transitions map[E][]*TransitionDef[S, E, C]
+	// EventOrder preserves the declaration order of transition events.
+	EventOrder []E
 	// Always defines transient transitions that fire immediately when guards are met.
 	Always []*TransitionDef[S, E, C]
 	// Delayed defines transitions that fire after a specific duration of time.
@@ -84,8 +86,12 @@ type TransitionDef[S ~string, E ~string, C any] struct {
 	Target S
 	// Guard is an optional condition that must be true for the transition to fire.
 	Guard func(C) bool
+	// GuardName is an optional label describing the guard.
+	GuardName string
 	// Action (Assign) is a pure function that updates the context during the transition.
 	Action func(C) C
+	// ActionName is an optional label describing the action.
+	ActionName string
 	// After is the duration to wait before a delayed transition fires.
 	After time.Duration
 }

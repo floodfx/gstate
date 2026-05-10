@@ -136,6 +136,9 @@ func (s *StateBuilder[S, E, C]) History(t HistoryType) {
 // On defines a transition triggered by a specific event.
 func (s *StateBuilder[S, E, C]) On(event E) *TransitionBuilder[S, E, C] {
 	t := &TransitionBuilder[S, E, C]{}
+	if _, exists := s.state.Transitions[event]; !exists {
+		s.state.EventOrder = append(s.state.EventOrder, event)
+	}
 	s.state.Transitions[event] = append(s.state.Transitions[event], &t.def)
 	return t
 }
@@ -165,9 +168,21 @@ func (t *TransitionBuilder[S, E, C]) Guard(fn func(C) bool) *TransitionBuilder[S
 	return t
 }
 
+// GuardLabel sets an optional label for the guard condition.
+func (t *TransitionBuilder[S, E, C]) GuardLabel(name string) *TransitionBuilder[S, E, C] {
+	t.def.GuardName = name
+	return t
+}
+
 // Assign adds a context update action to the transition.
 func (t *TransitionBuilder[S, E, C]) Assign(fn func(C) C) *TransitionBuilder[S, E, C] {
 	t.def.Action = fn
+	return t
+}
+
+// ActionLabel sets an optional label for the action.
+func (t *TransitionBuilder[S, E, C]) ActionLabel(name string) *TransitionBuilder[S, E, C] {
+	t.def.ActionName = name
 	return t
 }
 
