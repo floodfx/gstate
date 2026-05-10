@@ -46,7 +46,7 @@ func (m *MachineBuilder[S, E, C]) State(id S, fn func(*StateBuilder[S, E, C])) *
 func (m *MachineBuilder[S, E, C]) Build() *Machine[S, E, C] {
 	// Pre-compute metadata for all states
 	for id, state := range m.machine.States {
-		if state.Parent == "" {
+		if state.parent == "" {
 			m.computeMetadata(id, 0, []S{})
 		}
 	}
@@ -63,8 +63,8 @@ func (m *MachineBuilder[S, E, C]) computeMetadata(id S, depth int, path []S) {
 	copy(newPath, path)
 	newPath[len(path)] = id
 
-	state.Depth = depth
-	state.Path = newPath
+	state.depth = depth
+	state.path = newPath
 
 	for childID := range state.States {
 		m.computeMetadata(childID, depth+1, newPath)
@@ -83,7 +83,7 @@ func (s *StateBuilder[S, E, C]) State(id S, fn func(*StateBuilder[S, E, C])) {
 		machine: s.machine,
 		state: &StateDef[S, E, C]{
 			ID:          id,
-			Parent:      s.state.ID,
+			parent:      s.state.ID,
 			States:      make(map[S]*StateDef[S, E, C]),
 			Transitions: make(map[E][]*TransitionDef[S, E, C]),
 		},
@@ -170,7 +170,7 @@ func (t *TransitionBuilder[S, E, C]) Guard(fn func(C) bool) *TransitionBuilder[S
 
 // GuardLabel sets an optional label for the guard condition.
 func (t *TransitionBuilder[S, E, C]) GuardLabel(name string) *TransitionBuilder[S, E, C] {
-	t.def.GuardName = name
+	t.def.guardName = name
 	return t
 }
 
@@ -182,7 +182,7 @@ func (t *TransitionBuilder[S, E, C]) Assign(fn func(C) C) *TransitionBuilder[S, 
 
 // ActionLabel sets an optional label for the action.
 func (t *TransitionBuilder[S, E, C]) ActionLabel(name string) *TransitionBuilder[S, E, C] {
-	t.def.ActionName = name
+	t.def.actionName = name
 	return t
 }
 

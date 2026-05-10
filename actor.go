@@ -236,8 +236,8 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 		for j := i + 1; j < len(res); j++ {
 			dI := 0
 			dJ := 0
-			if sI, ok := a.machine.States[res[i]]; ok { dI = sI.Depth }
-			if sJ, ok := a.machine.States[res[j]]; ok { dJ = sJ.Depth }
+			if sI, ok := a.machine.States[res[i]]; ok { dI = sI.depth }
+			if sJ, ok := a.machine.States[res[j]]; ok { dJ = sJ.depth }
 			
 			if dI < dJ {
 				res[i], res[j] = res[j], res[i]
@@ -307,8 +307,8 @@ func (a *Actor[S, E, C]) executeTransition(sourceID S, t *TransitionDef[S, E, C]
 	sourceState, ok := a.machine.States[sourceID]
 	if !ok { return }
 
-	targetPath := targetState.Path
-	sourcePath := sourceState.Path
+	targetPath := targetState.path
+	sourcePath := sourceState.path
 	
 	// Find Lowest Common Ancestor (LCA) to determine which states to exit/enter
 	lcaID := S("")
@@ -356,8 +356,8 @@ func (a *Actor[S, E, C]) executeTransition(sourceID S, t *TransitionDef[S, E, C]
 				}
 				delete(a.timers, sID)
 			}
-			if stateDef.Parent != "" {
-				a.history[stateDef.Parent] = sID
+			if stateDef.parent != "" {
+				a.history[stateDef.parent] = sID
 			}
 		}
 		delete(a.active, sID)
@@ -454,7 +454,7 @@ func (a *Actor[S, E, C]) enterChildrenWithHistory(id S, deepHistory bool) {
 // getPathToRoot returns the pre-computed slice of ancestor IDs for a state.
 func (a *Actor[S, E, C]) getPathToRoot(id S) []S {
 	if s, ok := a.machine.States[id]; ok {
-		return s.Path
+		return s.path
 	}
 	return []S{}
 }
@@ -467,7 +467,7 @@ func (a *Actor[S, E, C]) isDescendant(childID, parentID S) bool {
 		if curr == parentID { return true }
 		stateDef := a.machine.States[curr]
 		if stateDef != nil {
-			curr = stateDef.Parent
+			curr = stateDef.parent
 		} else {
 			break
 		}
