@@ -320,7 +320,7 @@ The nine hooks on `Observer[S, E, C]`:
 
 - All callbacks except `OnInvokeStarted` / `OnInvokeCompleted` run **synchronously on the actor's event-processing goroutine** while it holds the actor's internal write lock. Implementations must be non-blocking.
 - Observers **must not** call methods on the same `Actor` that would re-enter the actor lock (e.g. `Snapshot()`, `State()`). They may call `Send` / `SendCtx`, which only enqueue.
-- The `Context *C` field on each payload references the actor's live context. **Do not mutate it.**
+- The `Context *C` field on each payload points to a **defensive copy** of the actor's context taken at the moment the hook fires. Reading is safe and accurately reflects state at that point; mutating the pointee has no effect on the actor. If `C` implements `Cloner`, that deep copy is used.
 - `OnInvokeStarted` / `OnInvokeCompleted` fire from the invoke goroutine and do not hold the actor lock.
 
 ### Implementing only the methods you care about (`NopObserver`)
@@ -359,6 +359,26 @@ for _, ev := range rec.Events(gstate.KindGuardEvaluated, gstate.KindTransition) 
 ```
 
 > **Try it:** [observer example](./examples/observer) — attach a `RecordingObserver` to a small machine and print the lifecycle log.
+
+### Printing and serializing payloads
+
+Every payload type implements `fmt.Stringer` with a short, stable format, so `fmt.Println(e)` produces readable output. `RecordedEvent.String()` delegates to the embedded payload, so a recorder log can be dumped with a single `fmt.Println(ev)`:
+
+```go
+for _, ev := range rec.Events() {
+    fmt.Println(ev)
+    // transition: transition[V1StGXR8_Z5j]: idle --GO--> active
+    // guard: guard[V1StGXR8_Z5j]: idle --GO[active]: result=true
+    // ...
+}
+```
+
+Payload structs also carry `json` tags, so they can be marshaled directly for shipping to a telemetry pipeline. `InvokeEvent.Error` is rendered as its `Error()` string (or omitted when nil) via a custom `MarshalJSON`:
+
+```go
+b, _ := json.Marshal(rec.Transitions()[0])
+// {"machine_id":"...","actor_id":"V1StGXR8_Z5j","from":"idle","to":"active","event":"GO","context":{...},"timestamp":"..."}
+```
 
 ---
 
@@ -471,6 +491,18 @@ A `Snapshot` contains:
 - **`ActorID ActorID`** — the producing actor's stable identifier
 
 `Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID`. For backwards compatibility, snapshots produced before `ActorID` existed (zero value) cause `Hydrate` to mint a fresh ID so the resulting actor always has a non-empty identifier.
+
+`Hydrate` accepts the same functional options as `Start`, so you can attach an observer or tune the mailbox on a restored actor:
+
+```go
+rec := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
+actor := gstate.Hydrate(machine, loaded,
+    gstate.WithObserver[MyState, MyEvent, MyContext](rec),
+    gstate.WithMailboxSize[MyState, MyEvent, MyContext](500),
+)
+```
+
+`WithActorID` on `Hydrate` overrides the snapshot's `ActorID` (useful when forking or anonymizing); when omitted, the snapshot's ID wins.
 
 > **Try it:** [persistence example](./examples/persistence) — snapshot to JSON and hydrate a new actor.
 
