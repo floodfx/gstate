@@ -28,9 +28,9 @@ func TestInvokeStartedAndCompletedSuccess(t *testing.T) {
 	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
 	defer a.Stop()
 
-	<-srcStart    // Src is running
+	<-srcStart        // Src is running
 	close(srcRelease) // let it complete
-	<-bar.done    // OnInvokeCompleted fired
+	<-bar.done        // OnInvokeCompleted fired
 
 	started := rec.InvokeStarted()
 	if len(started) != 1 || started[0].State != "loading" {
@@ -167,5 +167,40 @@ func TestInvokeCompletedOnCancellation(t *testing.T) {
 	}
 	if !errors.Is(completed[0].Error, context.Canceled) {
 		t.Errorf("InvokeCompleted.Error = %v, want context.Canceled", completed[0].Error)
+	}
+}
+
+func TestInvokeDoneCanAlwaysTransitionIntoAnotherInvoke(t *testing.T) {
+	secondStarted := make(chan error, 1)
+	m := New[StateID, EventID, Context]("invoke_always_invoke").
+		Initial("first").
+		State("first", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(func(_ context.Context, _ Context) error {
+				return nil
+			}, "routing", "failed")
+		}).
+		State("routing", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Always().GoTo("second")
+		}).
+		State("second", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(func(ctx context.Context, _ Context) error {
+				secondStarted <- ctx.Err()
+				return nil
+			}, "done", "failed")
+		}).
+		State("done", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
+		State("failed", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
+		Build()
+
+	a := Start(m, Context{})
+	defer a.Stop()
+
+	select {
+	case err := <-secondStarted:
+		if err != nil {
+			t.Fatalf("second invoke started with canceled context: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second invoke never started")
 	}
 }
