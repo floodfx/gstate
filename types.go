@@ -124,4 +124,7 @@ type Snapshot[S ~string, C any] struct {
 	// Context is the current data. If C contains reference types,
 	// implement [Cloner] for safe deep-copying.
 	Context C `json:"context"`
+	// ActorID is the stable identifier of the actor that produced this snapshot.
+	// [Hydrate] restores it so telemetry correlation survives serialization.
+	ActorID ActorID `json:"actor_id,omitempty"`
 }

@@ -5,7 +5,23 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	nanoid "github.com/jaevor/go-nanoid"
 )
+
+// defaultMailboxSize is the buffer size used when [WithMailboxSize] is not set.
+const defaultMailboxSize = 100
+
+// idGen is the package-level ActorID generator. It is initialized lazily and
+// produces 12-character URL-safe identifiers.
+var idGen = func() func() string {
+	g, err := nanoid.Standard(12)
+	if err != nil {
+		// nanoid.Standard only errors on invalid length; 12 is valid.
+		panic(fmt.Errorf("gstate: failed to initialize nanoid generator: %w", err))
+	}
+	return g
+}()
 
 // Actor is the runtime interpreter for a statechart machine.
 // It maintains the current state, processes events sequentially,
@@ -17,27 +33,97 @@ type Actor[S ~string, E ~string, C any] struct {
 	history     map[S]S
 	invocations map[S]context.CancelFunc
 	timers      map[S][]*time.Timer
-	mailbox     chan E
+	mailbox     chan envelope[E]
 	mu          sync.RWMutex
 	stopOnce    sync.Once
+
+	id       ActorID
+	observer Observer[S, E, C]
 }
 
-// Options defines configuration parameters for an Actor.
-type Options struct {
-	// MailboxSize sets the buffer size for the event channel. Defaults to 100.
-	MailboxSize int
+// envelope carries an event together with the request-scoped context that
+// originated it through the actor's mailbox.
+type envelope[E ~string] struct {
+	ctx   context.Context
+	event E
 }
 
-// Start creates and launches a new Actor instance for the given machine with default options.
-func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C) *Actor[S, E, C] {
-	return StartWithOptions(m, initialContext, Options{MailboxSize: 100})
-}
-
-// StartWithOptions creates and launches a new Actor instance with custom options.
-func StartWithOptions[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, opts Options) *Actor[S, E, C] {
-	if opts.MailboxSize <= 0 {
-		opts.MailboxSize = 100
+// contextSnapshotPtr returns a pointer to a defensive copy of the actor's
+// current context. It is used when building observer payloads so observers
+// cannot accidentally mutate the actor's live state through a payload's
+// Context pointer. When C implements [Cloner] the deep copy is used;
+// otherwise Go's value-copy semantics suffice.
+func (a *Actor[S, E, C]) contextSnapshotPtr() *C {
+	if cloner, ok := any(a.context).(Cloner[C]); ok {
+		c := cloner.Clone()
+		return &c
 	}
+	c := a.context
+	return &c
+}
+
+// config holds the resolved configuration for an [Actor]. It is built by
+// applying [Option] values passed to [Start].
+type config[S ~string, E ~string, C any] struct {
+	mailboxSize int
+	observer    Observer[S, E, C]
+	actorID     ActorID
+}
+
+// Option configures an [Actor] at [Start] or [Hydrate] time. Options are
+// constructed via methods on a typed [Machine] — [Machine.WithMailboxSize],
+// [Machine.WithObserver], [Machine.WithActorID] — which lets Go infer the
+// [S, E, C] type parameters from the machine so the call site needs no
+// annotations:
+//
+//	actor := gstate.Start(m, ctx,
+//	    m.WithMailboxSize(500),
+//	    m.WithObserver(obs),
+//	    m.WithActorID("worker-42"),
+//	)
+type Option[S ~string, E ~string, C any] func(*config[S, E, C])
+
+// WithMailboxSize returns an [Option] that sets the buffered capacity of the
+// actor's event channel. When omitted, the default is 100. Values <= 0 fall
+// back to the default.
+func (m *Machine[S, E, C]) WithMailboxSize(n int) Option[S, E, C] {
+	return func(c *config[S, E, C]) { c.mailboxSize = n }
+}
+
+// WithObserver returns an [Option] that installs an [Observer] receiving
+// lifecycle callbacks for the actor. When omitted, a no-op observer is used.
+// The observer is invoked synchronously on the actor's event-processing
+// goroutine; see [Observer] for the full threading contract.
+func (m *Machine[S, E, C]) WithObserver(obs Observer[S, E, C]) Option[S, E, C] {
+	return func(c *config[S, E, C]) { c.observer = obs }
+}
+
+// WithActorID returns an [Option] that overrides the auto-generated [ActorID]
+// for the actor. When omitted, a fresh ID is generated with nanoid. Supplying
+// an empty string is treated as "no override".
+func (m *Machine[S, E, C]) WithActorID(id ActorID) Option[S, E, C] {
+	return func(c *config[S, E, C]) { c.actorID = id }
+}
+
+// Start creates and launches a new [Actor] for the given machine. Options are
+// applied in order; later values for the same option win. The returned Actor
+// is already running and ready to receive events via [Actor.Send] or
+// [Actor.SendCtx].
+func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, opts ...Option[S, E, C]) *Actor[S, E, C] {
+	cfg := config[S, E, C]{mailboxSize: defaultMailboxSize}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if cfg.mailboxSize <= 0 {
+		cfg.mailboxSize = defaultMailboxSize
+	}
+	if cfg.observer == nil {
+		cfg.observer = NopObserver[S, E, C]{}
+	}
+	if cfg.actorID == "" {
+		cfg.actorID = ActorID(idGen())
+	}
+
 	a := &Actor[S, E, C]{
 		machine:     m,
 		context:     initialContext,
@@ -45,26 +131,55 @@ func StartWithOptions[S ~string, E ~string, C any](m *Machine[S, E, C], initialC
 		history:     make(map[S]S),
 		invocations: make(map[S]context.CancelFunc),
 		timers:      make(map[S][]*time.Timer),
-		mailbox:     make(chan E, opts.MailboxSize),
+		mailbox:     make(chan envelope[E], cfg.mailboxSize),
+		id:          cfg.actorID,
+		observer:    cfg.observer,
 	}
 	
 	// Resolve all initial states (handling hierarchy and defaults)
-	a.enterState(m.Initial)
-	
+	a.enterState(context.Background(), m.Initial)
+
 	// Handle any transient transitions that fire immediately
-	a.handleAlways()
+	a.handleAlways(context.Background())
 	
 	go a.loop()
 	return a
 }
 
-// Hydrate restores an Actor instance from a previously captured Snapshot.
-// It restarts any services (invocations/timers) associated with the active states
-// without re-executing state entry actions.
-func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot[S, C]) *Actor[S, E, C] {
+// Hydrate restores an [Actor] from a previously captured [Snapshot]. It
+// restarts any services (invocations/timers) associated with the active states
+// without re-executing state entry actions. The same [Option] set as [Start]
+// is accepted so callers can attach an observer or tune the mailbox on a
+// hydrated actor.
+//
+// Hydrate does not fire [Observer.OnStateEntered] or [Observer.OnTransition]
+// for the states restored from the snapshot — those events represent the
+// original state changes that were already observed before the snapshot was
+// captured. Hooks resume firing on the next event, Always evaluation, or
+// invoke completion handled by the hydrated actor.
+//
+// The [ActorID] is resolved in priority order: [WithActorID] if supplied,
+// otherwise the ActorID stored in the snapshot.
+func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot[S, C], opts ...Option[S, E, C]) *Actor[S, E, C] {
+	cfg := config[S, E, C]{mailboxSize: defaultMailboxSize}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if cfg.mailboxSize <= 0 {
+		cfg.mailboxSize = defaultMailboxSize
+	}
+	if cfg.observer == nil {
+		cfg.observer = NopObserver[S, E, C]{}
+	}
+
 	active := make(map[S]bool)
 	for _, sID := range snapshot.Active {
 		active[sID] = true
+	}
+
+	id := cfg.actorID
+	if id == "" {
+		id = snapshot.ActorID
 	}
 
 	a := &Actor[S, E, C]{
@@ -74,12 +189,14 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 		history:     snapshot.History,
 		invocations: make(map[S]context.CancelFunc),
 		timers:      make(map[S][]*time.Timer),
-		mailbox:     make(chan E, 100),
+		mailbox:     make(chan envelope[E], cfg.mailboxSize),
+		id:          id,
+		observer:    cfg.observer,
 	}
 
 	// Restart background services for all active states
 	for sID := range active {
-		a.restartServices(sID)
+		a.restartServices(context.Background(), sID)
 	}
 
 	go a.loop()
@@ -116,6 +233,14 @@ func (a *Actor[S, E, C]) Stop() {
 	})
 }
 
+// ID returns the actor's stable identifier. The ID is generated on [Start]
+// (unless overridden with [WithActorID]) and is preserved across
+// [Actor.Snapshot] and [Hydrate] so telemetry can correlate the same logical
+// actor across persistence boundaries.
+func (a *Actor[S, E, C]) ID() ActorID {
+	return a.id
+}
+
 // Context returns a thread-safe copy of the current context.
 // If C implements Cloner[C], it returns the result of c.Clone().
 func (a *Actor[S, E, C]) Context() C {
@@ -128,17 +253,44 @@ func (a *Actor[S, E, C]) Context() C {
 }
 
 // restartServices triggers the background tasks (invokes/timers) for a state.
-func (a *Actor[S, E, C]) restartServices(id S) {
+// ctx is the request-scoped context that triggered entry into this state. It
+// is fired through OnInvokeStarted and is the parent of the cancellable
+// invokeCtx passed to invoke.Src, so any trace/span values on ctx propagate
+// to Src as well as to OnInvokeCompleted. Cancelling ctx cancels the invoke.
+func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 	stateDef := a.machine.States[id]
 	if stateDef == nil { return }
 
 	// Start or restart invoked services
 	if stateDef.Invoke != nil {
-		ctx, cancel := context.WithCancel(context.Background())
+		invokeCtx, cancel := context.WithCancel(ctx)
 		a.invocations[id] = cancel
+		start := time.Now()
+		a.observer.OnInvokeStarted(ctx, InvokeEvent[S, E, C]{
+			MachineID: a.machine.ID,
+			ActorID:   a.id,
+			State:     id,
+			Timestamp: start,
+		})
 		go func(sID S, invoke *InvokeDef[S, E, C], c C) {
-			err := invoke.Src(ctx, c)
-			if ctx.Err() != nil {
+			err := invoke.Src(invokeCtx, c)
+			completedAt := time.Now()
+			// Report completion regardless of cancellation so observers can
+			// see cancelled invocations. Use invokeCtx.Err() to surface the
+			// cancellation reason when Src didn't return it explicitly.
+			reportedErr := err
+			if reportedErr == nil && invokeCtx.Err() != nil {
+				reportedErr = invokeCtx.Err()
+			}
+			a.observer.OnInvokeCompleted(invokeCtx, InvokeEvent[S, E, C]{
+				MachineID: a.machine.ID,
+				ActorID:   a.id,
+				State:     sID,
+				Error:     reportedErr,
+				Duration:  completedAt.Sub(start),
+				Timestamp: completedAt,
+			})
+			if invokeCtx.Err() != nil {
 				return // cancelled by state exit
 			}
 			target := invoke.OnDone
@@ -146,7 +298,7 @@ func (a *Actor[S, E, C]) restartServices(id S) {
 				target = invoke.OnError
 			}
 			if target != "" {
-				a.executeInternalTransition(sID, target)
+				a.executeInternalTransition(invokeCtx, sID, target)
 			}
 		}(id, stateDef.Invoke, a.context)
 	}
@@ -155,7 +307,7 @@ func (a *Actor[S, E, C]) restartServices(id S) {
 	for _, t := range stateDef.Delayed {
 		trans := t // capture for closure
 		timer := time.AfterFunc(t.After, func() {
-			a.executeInternalTransition(id, trans.Target)
+			a.executeInternalTransition(context.Background(), id, trans.Target)
 		})
 		a.timers[id] = append(a.timers[id], timer)
 	}
@@ -186,13 +338,14 @@ func (a *Actor[S, E, C]) Snapshot() Snapshot[S, C] {
 		Active:  active,
 		History: history,
 		Context: ctx,
+		ActorID: a.id,
 	}
 }
 
 // enterState handles the full entry logic for a state, including its children.
-func (a *Actor[S, E, C]) enterState(id S) {
-	a.enterSingleState(id)
-	a.enterChildrenWithHistory(id, false)
+func (a *Actor[S, E, C]) enterState(ctx context.Context, id S) {
+	a.enterSingleState(ctx, id)
+	a.enterChildrenWithHistory(ctx, id, false)
 }
 
 // States returns the current list of all active states, ordered from root to leaf.
@@ -247,32 +400,45 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 	return res
 }
 
-// Send queues an event in the actor's mailbox for sequential processing.
-// This method is non-blocking.
+// Send enqueues an event in the actor's mailbox using [context.Background] as
+// the request-scoped context. It is a non-blocking thin wrapper over
+// [Actor.SendCtx].
 func (a *Actor[S, E, C]) Send(event E) {
-	// If the mailbox is closed, this will panic. 
-	// Ideally we check context or stop channel, but for channel send it's idiomatic 
-	// to let the user ensure they don't send to a stopped actor or use a recover.
-	// For simplicity in this library, we assume the user manages lifecycle or we could add a check.
-	// Adding a non-blocking check on a closed channel is hard. 
-	// We'll trust the user or the actor loop.
+	a.SendCtx(context.Background(), event)
+}
+
+// SendCtx enqueues an event in the actor's mailbox carrying the supplied
+// request-scoped context. The context is delivered to every [Observer]
+// callback fired in response to this event, including Always transitions
+// chained after it. Sending to a stopped actor is a no-op.
+func (a *Actor[S, E, C]) SendCtx(ctx context.Context, event E) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	defer func() {
-		// Recover if sending to closed channel
-		recover() 
+		// Recover if sending to a closed mailbox after Stop.
+		_ = recover()
 	}()
-	a.mailbox <- event
+	a.mailbox <- envelope[E]{ctx: ctx, event: event}
 }
 
 // loop is the main event loop running in a background goroutine.
 func (a *Actor[S, E, C]) loop() {
-	for event := range a.mailbox {
-		a.handleEvent(event)
+	for env := range a.mailbox {
+		a.handleEvent(env.ctx, env.event)
 	}
 }
 
-func (a *Actor[S, E, C]) handleEvent(event E) {
+func (a *Actor[S, E, C]) handleEvent(ctx context.Context, event E) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	a.observer.OnEventReceived(ctx, EventNotice[S, E, C]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		Event:     event,
+		Timestamp: time.Now(),
+	})
 
 	activeStates := a.getSortedActiveStatesLocked()
 	// Bubble up: check transitions from deepest state to root
@@ -280,25 +446,68 @@ func (a *Actor[S, E, C]) handleEvent(event E) {
 		stateDef := a.machine.States[sID]
 		if transitions, ok := stateDef.Transitions[event]; ok {
 			for _, t := range transitions {
-				if t.Guard == nil || t.Guard(a.context) {
-					a.executeTransition(sID, t)
-					// Check for transient transitions after the event transition
-					a.handleAlwaysInternal()
-					return
+				if t.Guard != nil {
+					ok := t.Guard(a.context)
+					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, C]{
+						MachineID: a.machine.ID,
+						ActorID:   a.id,
+						State:     sID,
+						Event:     event,
+						Target:    t.Target,
+						Result:    ok,
+						Context:   a.contextSnapshotPtr(),
+						Timestamp: time.Now(),
+					})
+					if !ok {
+						continue
+					}
 				}
+				a.executeTransition(ctx, sID, t, event)
+				// Check for transient transitions after the event transition
+				a.handleAlwaysInternal(ctx)
+				return
 			}
 		}
 	}
+
+	// No transition fired for this event.
+	a.observer.OnEventDropped(ctx, EventNotice[S, E, C]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		Event:     event,
+		Reason:    "no_transition",
+		Timestamp: time.Now(),
+	})
 }
 
 // executeTransition performs the state transition logic, including LCA resolution,
-// entry/exit actions, and context updates.
-func (a *Actor[S, E, C]) executeTransition(sourceID S, t *TransitionDef[S, E, C]) {
+// entry/exit actions, and context updates. ctx is the request-scoped context
+// for the triggering event (or context.Background() for internal triggers).
+// event is the triggering event ID (zero value for Always/Delayed/Invoke).
+func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *TransitionDef[S, E, C], event E) {
 	// 1. Handle internal transitions (no target)
 	if t.Target == "" {
 		if t.Action != nil {
 			a.context = t.Action(a.context)
+			a.observer.OnActionExecuted(ctx, ActionEvent[S, E, C]{
+				MachineID: a.machine.ID,
+				ActorID:   a.id,
+				State:     sourceID,
+				Event:     event,
+				Target:    "",
+				Context:   a.contextSnapshotPtr(),
+				Timestamp: time.Now(),
+			})
 		}
+		a.observer.OnTransition(ctx, TransitionEvent[S, E, C]{
+			MachineID: a.machine.ID,
+			ActorID:   a.id,
+			From:      sourceID,
+			To:        "",
+			Event:     event,
+			Context:   a.contextSnapshotPtr(),
+			Timestamp: time.Now(),
+		})
 		return
 	}
 
@@ -361,17 +570,33 @@ func (a *Actor[S, E, C]) executeTransition(sourceID S, t *TransitionDef[S, E, C]
 			}
 		}
 		delete(a.active, sID)
+		a.observer.OnStateExited(ctx, StateEvent[S, E, C]{
+			MachineID: a.machine.ID,
+			ActorID:   a.id,
+			State:     sID,
+			Context:   a.contextSnapshotPtr(),
+			Timestamp: time.Now(),
+		})
 	}
 
 	// 3. Execute transition action (Assign)
 	if t.Action != nil {
 		a.context = t.Action(a.context)
+		a.observer.OnActionExecuted(ctx, ActionEvent[S, E, C]{
+			MachineID: a.machine.ID,
+			ActorID:   a.id,
+			State:     sourceID,
+			Event:     event,
+			Target:    t.Target,
+			Context:   a.contextSnapshotPtr(),
+			Timestamp: time.Now(),
+		})
 	}
 
 	// 4. Enter states from LCA (exclusive) down to target
 	if isSelfTransition {
-		a.enterSingleState(t.Target)
-		a.enterChildrenWithHistory(t.Target, false)
+		a.enterSingleState(ctx, t.Target)
+		a.enterChildrenWithHistory(ctx, t.Target, false)
 	} else {
 		lcaDepth := -1
 		if lcaID != "" {
@@ -384,60 +609,84 @@ func (a *Actor[S, E, C]) executeTransition(sourceID S, t *TransitionDef[S, E, C]
 		}
 
 		for i := lcaDepth + 1; i < len(targetPath); i++ {
-			a.enterSingleState(targetPath[i])
+			a.enterSingleState(ctx, targetPath[i])
 		}
-		
+
 		// 5. Resolve children of the target state
 		if len(targetPath) > 0 {
-			a.enterChildrenWithHistory(targetPath[len(targetPath)-1], false)
+			a.enterChildrenWithHistory(ctx, targetPath[len(targetPath)-1], false)
 		}
 	}
+
+	a.observer.OnTransition(ctx, TransitionEvent[S, E, C]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		From:      sourceID,
+		To:        t.Target,
+		Event:     event,
+		Context:   a.contextSnapshotPtr(),
+		Timestamp: time.Now(),
+	})
 }
 
-// enterSingleState marks a state as active and runs its entry actions.
-func (a *Actor[S, E, C]) enterSingleState(id S) {
+// enterSingleState marks a state as active, runs its entry actions, and
+// notifies the observer.
+func (a *Actor[S, E, C]) enterSingleState(ctx context.Context, id S) {
 	a.active[id] = true
 	stateDef := a.machine.States[id]
-	if stateDef == nil { return }
+	if stateDef == nil {
+		return
+	}
 
 	for _, action := range stateDef.Entry {
 		a.context = action(a.context)
 	}
 
-	a.restartServices(id)
+	a.observer.OnStateEntered(ctx, StateEvent[S, E, C]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		State:     id,
+		Context:   a.contextSnapshotPtr(),
+		Timestamp: time.Now(),
+	})
+
+	a.restartServices(ctx, id)
 }
 
 // executeInternalTransition handles transitions triggered by services (invokes/timers).
-func (a *Actor[S, E, C]) executeInternalTransition(sourceID S, targetID S) {
+func (a *Actor[S, E, C]) executeInternalTransition(ctx context.Context, sourceID S, targetID S) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	// Verify the source state is still active before transitioning
 	if !a.active[sourceID] {
 		return
 	}
 
 	t := &TransitionDef[S, E, C]{Target: targetID}
-	a.executeTransition(sourceID, t)
-	a.handleAlwaysInternal()
+	var zero E
+	a.executeTransition(ctx, sourceID, t, zero)
+	a.handleAlwaysInternal(ctx)
 }
 
 // enterChildrenWithHistory resolves the child states to enter, respecting history and parallel types.
-func (a *Actor[S, E, C]) enterChildrenWithHistory(id S, deepHistory bool) {
+func (a *Actor[S, E, C]) enterChildrenWithHistory(ctx context.Context, id S, deepHistory bool) {
 	stateDef := a.machine.States[id]
-	if stateDef == nil { return }
+	if stateDef == nil {
+		return
+	}
 
 	if stateDef.Type == Parallel {
 		// Parallel regions: enter all regions
 		for childID := range stateDef.States {
-			a.enterSingleState(childID)
-			a.enterChildrenWithHistory(childID, deepHistory)
+			a.enterSingleState(ctx, childID)
+			a.enterChildrenWithHistory(ctx, childID, deepHistory)
 		}
 	} else {
 		// Compound regions: determine which child to enter
 		targetID := stateDef.Initial
 		useDeepHistory := deepHistory || stateDef.History == Deep
-		
+
 		if (stateDef.History == Shallow || stateDef.History == Deep) && a.history[id] != "" {
 			targetID = a.history[id]
 		} else if deepHistory && a.history[id] != "" {
@@ -445,8 +694,8 @@ func (a *Actor[S, E, C]) enterChildrenWithHistory(id S, deepHistory bool) {
 		}
 
 		if targetID != "" {
-			a.enterSingleState(targetID)
-			a.enterChildrenWithHistory(targetID, useDeepHistory)
+			a.enterSingleState(ctx, targetID)
+			a.enterChildrenWithHistory(ctx, targetID, useDeepHistory)
 		}
 	}
 }
@@ -476,18 +725,19 @@ func (a *Actor[S, E, C]) isDescendant(childID, parentID S) bool {
 }
 
 // handleAlways acquires a lock and checks for transient transitions.
-func (a *Actor[S, E, C]) handleAlways() {
+func (a *Actor[S, E, C]) handleAlways(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.handleAlwaysInternal()
+	a.handleAlwaysInternal(ctx)
 }
 
 // handleAlwaysInternal checks active states for Always transitions.
 // Must be called with a write lock.
 // It includes a circuit breaker to prevent infinite loops.
-func (a *Actor[S, E, C]) handleAlwaysInternal() {
+func (a *Actor[S, E, C]) handleAlwaysInternal(ctx context.Context) {
 	const maxIterations = 100
 	iterations := 0
+	var zero E
 
 	for {
 		iterations++
@@ -501,15 +751,29 @@ func (a *Actor[S, E, C]) handleAlwaysInternal() {
 
 		transitioned := false
 		sortedActive := a.getSortedActiveStatesLocked()
-		
+
 		for _, sID := range sortedActive {
 			stateDef := a.machine.States[sID]
 			for _, t := range stateDef.Always {
-				if t.Guard == nil || t.Guard(a.context) {
-					a.executeTransition(sID, t)
-					transitioned = true
-					break // restart loop to re-evaluate active states
+				if t.Guard != nil {
+					ok := t.Guard(a.context)
+					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, C]{
+						MachineID: a.machine.ID,
+						ActorID:   a.id,
+						State:     sID,
+						Event:     zero,
+						Target:    t.Target,
+						Result:    ok,
+						Context:   a.contextSnapshotPtr(),
+						Timestamp: time.Now(),
+					})
+					if !ok {
+						continue
+					}
 				}
+				a.executeTransition(ctx, sID, t, zero)
+				transitioned = true
+				break // restart loop to re-evaluate active states
 			}
 			if transitioned {
 				break
