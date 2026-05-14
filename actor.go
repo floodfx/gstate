@@ -135,13 +135,13 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 		id:          cfg.actorID,
 		observer:    cfg.observer,
 	}
-	
+
 	// Resolve all initial states (handling hierarchy and defaults)
 	a.enterState(context.Background(), m.Initial)
 
 	// Handle any transient transitions that fire immediately
 	a.handleAlways(context.Background())
-	
+
 	go a.loop()
 	return a
 }
@@ -208,7 +208,7 @@ func (a *Actor[S, E, C]) Stop() {
 	a.stopOnce.Do(func() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		
+
 		// Cancel all invocations
 		if a.invocations != nil {
 			for _, cancel := range a.invocations {
@@ -259,7 +259,9 @@ func (a *Actor[S, E, C]) Context() C {
 // to Src as well as to OnInvokeCompleted. Cancelling ctx cancels the invoke.
 func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 	stateDef := a.machine.States[id]
-	if stateDef == nil { return }
+	if stateDef == nil {
+		return
+	}
 
 	// Start or restart invoked services
 	if stateDef.Invoke != nil {
@@ -298,7 +300,7 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 				target = invoke.OnError
 			}
 			if target != "" {
-				a.executeInternalTransition(invokeCtx, sID, target)
+				a.executeInternalTransition(context.WithoutCancel(invokeCtx), sID, target)
 			}
 		}(id, stateDef.Invoke, a.context)
 	}
@@ -352,10 +354,10 @@ func (a *Actor[S, E, C]) enterState(ctx context.Context, id S) {
 func (a *Actor[S, E, C]) States() []S {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	
+
 	// Get states sorted by depth (deepest first)
 	active := a.getSortedActiveStatesLocked()
-	
+
 	// Reverse to get root-to-leaf order
 	res := make([]S, len(active))
 	for i, sID := range active {
@@ -389,9 +391,13 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 		for j := i + 1; j < len(res); j++ {
 			dI := 0
 			dJ := 0
-			if sI, ok := a.machine.States[res[i]]; ok { dI = sI.depth }
-			if sJ, ok := a.machine.States[res[j]]; ok { dJ = sJ.depth }
-			
+			if sI, ok := a.machine.States[res[i]]; ok {
+				dI = sI.depth
+			}
+			if sJ, ok := a.machine.States[res[j]]; ok {
+				dJ = sJ.depth
+			}
+
 			if dI < dJ {
 				res[i], res[j] = res[j], res[i]
 			}
@@ -512,13 +518,17 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 	}
 
 	targetState, ok := a.machine.States[t.Target]
-	if !ok { return }
+	if !ok {
+		return
+	}
 	sourceState, ok := a.machine.States[sourceID]
-	if !ok { return }
+	if !ok {
+		return
+	}
 
 	targetPath := targetState.path
 	sourcePath := sourceState.path
-	
+
 	// Find Lowest Common Ancestor (LCA) to determine which states to exit/enter
 	lcaID := S("")
 	for i := 0; i < len(sourcePath) && i < len(targetPath); i++ {
@@ -532,10 +542,10 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 	// 2. Exit states from deepest active up to but not including LCA
 	toExit := []S{}
 	sortedActive := a.getSortedActiveStatesLocked()
-	
+
 	// FIX: Self-transition behavior.
 	isSelfTransition := sourceID == t.Target
-	
+
 	for _, sID := range sortedActive {
 		if isSelfTransition {
 			if sID == sourceID || a.isDescendant(sID, sourceID) {
@@ -710,10 +720,14 @@ func (a *Actor[S, E, C]) getPathToRoot(id S) []S {
 
 // isDescendant returns true if childID is a descendant of parentID.
 func (a *Actor[S, E, C]) isDescendant(childID, parentID S) bool {
-	if parentID == "" { return true }
+	if parentID == "" {
+		return true
+	}
 	curr := childID
 	for curr != "" {
-		if curr == parentID { return true }
+		if curr == parentID {
+			return true
+		}
 		stateDef := a.machine.States[curr]
 		if stateDef != nil {
 			curr = stateDef.parent
