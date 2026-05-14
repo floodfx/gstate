@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 )
 
 // mutatingObserver attempts to mutate Context through every payload it sees.
@@ -53,19 +52,16 @@ func TestObserverCannotMutateActorContext(t *testing.T) {
 		Build()
 
 	rec := &RecordingObserver[StateID, EventID, Context]{}
+	bar := newKindBarrier(KindTransition, 1)
 	a := Start(m, Context{Count: 1},
-		WithObserver[StateID, EventID, Context](
-			multiObserver{mutatingObserver{}, rec},
+		m.WithObserver(
+			MultiObserver[StateID, EventID, Context]{mutatingObserver{}, rec, bar},
 		),
 	)
 	defer a.Stop()
 
 	a.Send("GO")
-	// Wait until the transition has been observed.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && len(rec.Transitions()) == 0 {
-		time.Sleep(time.Millisecond)
-	}
+	<-bar.done
 
 	got := a.Context()
 	if got.Count != 2 {
@@ -103,10 +99,14 @@ func TestObserverUsesClonerWhenAvailable(t *testing.T) {
 		State("b", func(_ *StateBuilder[cState, cEvent, cloningContext]) {}).
 		Build()
 
-	a := Start(m, initial, WithObserver[cState, cEvent, cloningContext](&RecordingObserver[cState, cEvent, cloningContext]{}))
+	rec := &RecordingObserver[cState, cEvent, cloningContext]{}
+	barrier := make(chan struct{}, 1)
+	signal := &cloneSignalObserver{ch: barrier}
+	a := Start(m, initial, m.WithObserver(MultiObserver[cState, cEvent, cloningContext]{rec, signal}))
 	defer a.Stop()
 	a.Send("GO")
-	time.Sleep(20 * time.Millisecond)
+
+	<-barrier // deterministic: blocks until OnTransition fires
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -115,52 +115,15 @@ func TestObserverUsesClonerWhenAvailable(t *testing.T) {
 	}
 }
 
-// multiObserver fans Observer callbacks to multiple targets (mirrors the
-// helper in examples/observer/main.go).
-type multiObserver []Observer[StateID, EventID, Context]
+type cloneSignalObserver struct {
+	NopObserver[cState, cEvent, cloningContext]
+	ch chan struct{}
+}
 
-func (m multiObserver) OnTransition(ctx context.Context, e TransitionEvent[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnTransition(ctx, e)
+func (c *cloneSignalObserver) OnTransition(context.Context, TransitionEvent[cState, cEvent, cloningContext]) {
+	select {
+	case c.ch <- struct{}{}:
+	default:
 	}
 }
-func (m multiObserver) OnGuardEvaluated(ctx context.Context, e GuardEvent[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnGuardEvaluated(ctx, e)
-	}
-}
-func (m multiObserver) OnInvokeStarted(ctx context.Context, e InvokeEvent[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnInvokeStarted(ctx, e)
-	}
-}
-func (m multiObserver) OnInvokeCompleted(ctx context.Context, e InvokeEvent[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnInvokeCompleted(ctx, e)
-	}
-}
-func (m multiObserver) OnStateEntered(ctx context.Context, e StateEvent[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnStateEntered(ctx, e)
-	}
-}
-func (m multiObserver) OnStateExited(ctx context.Context, e StateEvent[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnStateExited(ctx, e)
-	}
-}
-func (m multiObserver) OnActionExecuted(ctx context.Context, e ActionEvent[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnActionExecuted(ctx, e)
-	}
-}
-func (m multiObserver) OnEventReceived(ctx context.Context, e EventNotice[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnEventReceived(ctx, e)
-	}
-}
-func (m multiObserver) OnEventDropped(ctx context.Context, e EventNotice[StateID, EventID, Context]) {
-	for _, o := range m {
-		o.OnEventDropped(ctx, e)
-	}
-}
+

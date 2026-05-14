@@ -297,10 +297,10 @@ When you want to record transitions, guard outcomes, state entries/exits, transi
 
 ```go
 obs := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
-actor := gstate.Start(machine, MyContext{},
-    gstate.WithObserver[MyState, MyEvent, MyContext](obs),
-)
+actor := gstate.Start(machine, MyContext{}, machine.WithObserver(obs))
 ```
+
+> The `machine.WithObserver(obs)` form lets Go infer the `[MyState, MyEvent, MyContext]` type parameters from `machine`, so you don't have to repeat them on every option. The package-level `gstate.WithObserver[S, E, C](obs)` form still works if you prefer.
 
 The nine hooks on `Observer[S, E, C]`:
 
@@ -318,10 +318,16 @@ The nine hooks on `Observer[S, E, C]`:
 
 ### Threading and locking contract
 
-- All callbacks except `OnInvokeStarted` / `OnInvokeCompleted` run **synchronously on the actor's event-processing goroutine** while it holds the actor's internal write lock. Implementations must be non-blocking.
-- Observers **must not** call methods on the same `Actor` that would re-enter the actor lock (e.g. `Snapshot()`, `State()`). They may call `Send` / `SendCtx`, which only enqueue.
+- All callbacks except `OnInvokeCompleted` run **synchronously on the actor's event-processing goroutine** while it holds the actor's internal write lock. This includes `OnInvokeStarted`, which fires when an invoked service is launched during state entry. Implementations must be non-blocking.
+- Observers **must not** call methods on the same `Actor` that would re-enter the actor lock (e.g. `Snapshot()`, `State()`).
+- Observers **must not** call `Send` / `SendCtx` synchronously: the channel send can block on a full mailbox, and the loop goroutine that would drain it cannot acquire the actor lock the observer is holding — a hard deadlock. If you need to dispatch an event from an observer, do it from a fresh goroutine:
+  ```go
+  func (o *myObs) OnTransition(_ context.Context, e gstate.TransitionEvent[...]) {
+      go func() { actor.Send(EventX) }()
+  }
+  ```
 - The `Context *C` field on each payload points to a **defensive copy** of the actor's context taken at the moment the hook fires. Reading is safe and accurately reflects state at that point; mutating the pointee has no effect on the actor. If `C` implements `Cloner`, that deep copy is used.
-- `OnInvokeStarted` / `OnInvokeCompleted` fire from the invoke goroutine and do not hold the actor lock.
+- `OnInvokeCompleted` fires from the invoke goroutine and does not hold the actor lock.
 
 ### Implementing only the methods you care about (`NopObserver`)
 
@@ -343,9 +349,7 @@ func (l *loggingObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[
 
 ```go
 rec := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
-actor := gstate.Start(machine, MyContext{},
-    gstate.WithObserver[MyState, MyEvent, MyContext](rec),
-)
+actor := gstate.Start(machine, MyContext{}, machine.WithObserver(rec))
 actor.Send(EventGo)
 
 for _, t := range rec.Transitions() {
@@ -392,11 +396,12 @@ A `Machine` is a static blueprint. To actually run it, you create an **Actor**. 
 // Start with default options
 actor := gstate.Start(machine, MyContext{Count: 0})
 
-// Or with one or more functional options
+// Or with one or more functional options — call them as methods on the
+// machine to let Go infer the [S, E, C] type parameters.
 actor := gstate.Start(machine, MyContext{Count: 0},
-    gstate.WithMailboxSize[MyState, MyEvent, MyContext](500),
-    gstate.WithObserver[MyState, MyEvent, MyContext](myObs),
-    gstate.WithActorID[MyState, MyEvent, MyContext]("worker-42"),
+    machine.WithMailboxSize(500),
+    machine.WithObserver(myObs),
+    machine.WithActorID("worker-42"),
 )
 ```
 
@@ -405,6 +410,8 @@ Available options:
 - `WithMailboxSize(n)` — buffered capacity for the event channel. Default `100`.
 - `WithObserver(obs)` — install an [`Observer`](#11-observing-lifecycle-events). Default is a no-op.
 - `WithActorID(id)` — override the auto-generated [`ActorID`](#actor-identity).
+
+Each option is available both as a method on `*Machine[S, E, C]` (inference-friendly, recommended) and as a package-level generic helper (e.g. `gstate.WithObserver[S, E, C](obs)`).
 
 ### Actor Identity
 
@@ -492,13 +499,15 @@ A `Snapshot` contains:
 
 `Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID` from the snapshot.
 
+`Hydrate` does **not** fire `OnStateEntered` or `OnTransition` for the states being restored — those events represent the original state changes that were already observed before the snapshot was captured. Hooks resume firing on the next event, Always evaluation, or invoke completion processed by the hydrated actor.
+
 `Hydrate` accepts the same functional options as `Start`, so you can attach an observer or tune the mailbox on a restored actor:
 
 ```go
 rec := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
 actor := gstate.Hydrate(machine, loaded,
-    gstate.WithObserver[MyState, MyEvent, MyContext](rec),
-    gstate.WithMailboxSize[MyState, MyEvent, MyContext](500),
+    machine.WithObserver(rec),
+    machine.WithMailboxSize(500),
 )
 ```
 

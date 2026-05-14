@@ -22,7 +22,7 @@ func (c *ctxRecorder) OnEventReceived(ctx context.Context, _ EventNotice[StateID
 func TestSendCtxPropagatesContext(t *testing.T) {
 	m := tinyMachine()
 	rec := &ctxRecorder{got: make(chan context.Context, 1)}
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(rec))
 	defer a.Stop()
 
 	type key struct{}
@@ -42,7 +42,7 @@ func TestSendCtxPropagatesContext(t *testing.T) {
 func TestSendUsesBackgroundContext(t *testing.T) {
 	m := tinyMachine()
 	rec := &ctxRecorder{got: make(chan context.Context, 1)}
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(rec))
 	defer a.Stop()
 
 	a.Send("GO")

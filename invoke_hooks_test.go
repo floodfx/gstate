@@ -9,11 +9,15 @@ import (
 
 func TestInvokeStartedAndCompletedSuccess(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
+	bar := newKindBarrier(KindInvokeCompleted, 1)
+	srcStart := make(chan struct{})
+	srcRelease := make(chan struct{})
 	m := New[StateID, EventID, Context]("invoke_obs_ok").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
 			s.Invoke(func(_ context.Context, _ Context) error {
-				time.Sleep(10 * time.Millisecond)
+				close(srcStart)
+				<-srcRelease
 				return nil
 			}, "done", "fail")
 		}).
@@ -21,19 +25,17 @@ func TestInvokeStartedAndCompletedSuccess(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
 	defer a.Stop()
 
-	waitForKind(t, rec, KindInvokeCompleted, time.Second)
+	<-srcStart    // Src is running
+	close(srcRelease) // let it complete
+	<-bar.done    // OnInvokeCompleted fired
 
 	started := rec.InvokeStarted()
-	if len(started) != 1 {
-		t.Fatalf("InvokeStarted count = %d, want 1", len(started))
+	if len(started) != 1 || started[0].State != "loading" {
+		t.Fatalf("InvokeStarted = %+v", started)
 	}
-	if started[0].State != "loading" {
-		t.Errorf("InvokeStarted.State = %q, want loading", started[0].State)
-	}
-
 	completed := rec.InvokeCompleted()
 	if len(completed) != 1 {
 		t.Fatalf("InvokeCompleted count = %d, want 1", len(completed))
@@ -48,6 +50,7 @@ func TestInvokeStartedAndCompletedSuccess(t *testing.T) {
 
 func TestInvokeCompletedOnError(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
+	bar := newKindBarrier(KindInvokeCompleted, 1)
 	wantErr := errors.New("boom")
 	m := New[StateID, EventID, Context]("invoke_obs_err").
 		Initial("loading").
@@ -60,10 +63,10 @@ func TestInvokeCompletedOnError(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
 	defer a.Stop()
 
-	waitForKind(t, rec, KindInvokeCompleted, time.Second)
+	<-bar.done
 
 	completed := rec.InvokeCompleted()
 	if len(completed) != 1 {
@@ -74,8 +77,70 @@ func TestInvokeCompletedOnError(t *testing.T) {
 	}
 }
 
+// invokeCtxCapture records the ctx passed to each invoke hook into per-hook
+// channels for deterministic synchronisation.
+type invokeCtxCapture struct {
+	NopObserver[StateID, EventID, Context]
+	started   chan context.Context
+	completed chan context.Context
+}
+
+func (c *invokeCtxCapture) OnInvokeStarted(ctx context.Context, _ InvokeEvent[StateID, EventID, Context]) {
+	select {
+	case c.started <- ctx:
+	default:
+	}
+}
+
+func (c *invokeCtxCapture) OnInvokeCompleted(ctx context.Context, _ InvokeEvent[StateID, EventID, Context]) {
+	select {
+	case c.completed <- ctx:
+	default:
+	}
+}
+
+func TestInvokeHooksPropagateSendCtx(t *testing.T) {
+	cap := &invokeCtxCapture{
+		started:   make(chan context.Context, 1),
+		completed: make(chan context.Context, 1),
+	}
+	m := New[StateID, EventID, Context]("invoke_ctx_trace").
+		Initial("idle").
+		State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("GO").GoTo("loading")
+		}).
+		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(func(_ context.Context, _ Context) error {
+				return nil
+			}, "done", "fail")
+		}).
+		State("done", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
+		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
+		Build()
+
+	a := Start(m, Context{}, m.WithObserver(cap))
+	defer a.Stop()
+
+	type key struct{}
+	parent := context.WithValue(context.Background(), key{}, "trace-xyz")
+	a.SendCtx(parent, "GO")
+
+	for _, ch := range []chan context.Context{cap.started, cap.completed} {
+		select {
+		case ctx := <-ch:
+			if got := ctx.Value(key{}); got != "trace-xyz" {
+				t.Errorf("invoke hook ctx missing trace value; got %v", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("invoke hook never fired") // hard timeout floor, not a primary sync
+		}
+	}
+}
+
 func TestInvokeCompletedOnCancellation(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
+	startedBar := newKindBarrier(KindInvokeStarted, 1)
+	completedBar := newKindBarrier(KindInvokeCompleted, 1)
 	m := New[StateID, EventID, Context]("invoke_obs_cancel").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
@@ -89,12 +154,12 @@ func TestInvokeCompletedOnCancellation(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, startedBar, completedBar}))
 	defer a.Stop()
 
-	waitForKind(t, rec, KindInvokeStarted, time.Second)
+	<-startedBar.done
 	a.Send("CANCEL")
-	waitForKind(t, rec, KindInvokeCompleted, time.Second)
+	<-completedBar.done
 
 	completed := rec.InvokeCompleted()
 	if len(completed) != 1 {

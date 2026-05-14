@@ -19,14 +19,22 @@ import (
 //
 // Threading and locking contract:
 //
-//   - All callbacks except OnInvokeStarted and OnInvokeCompleted run
-//     synchronously on the actor's event-processing goroutine while it holds
-//     the actor's internal write lock. Implementations must be non-blocking.
+//   - All callbacks except OnInvokeCompleted run synchronously on the actor's
+//     event-processing goroutine while it holds the actor's internal write
+//     lock. This includes OnInvokeStarted, which fires from
+//     enterSingleState's service-restart path. Implementations must be
+//     non-blocking.
 //   - Implementations must not call methods on the same [Actor] that would
-//     require re-entering the actor lock (e.g. [Actor.Snapshot], [Actor.State]).
-//     They may call [Actor.Send] or [Actor.SendCtx], which only enqueue.
-//   - OnInvokeStarted and OnInvokeCompleted fire from the invoke goroutine and
-//     do not hold the actor lock.
+//     require re-entering the actor lock (e.g. [Actor.Snapshot],
+//     [Actor.State]).
+//   - Implementations must not call [Actor.Send] or [Actor.SendCtx]
+//     synchronously: the channel send can block on a full mailbox, and the
+//     loop goroutine that would drain it cannot acquire the actor lock the
+//     observer is holding — a hard deadlock. If an observer needs to dispatch
+//     into the actor, do it from a fresh goroutine
+//     (e.g. `go func() { actor.Send(EventX) }()`).
+//   - OnInvokeCompleted fires from the invoke goroutine and does not hold the
+//     actor lock.
 //   - Payload pointer fields (Context *C) reference a defensive copy of the
 //     actor's context taken at the moment the hook fires. Reading is safe and
 //     accurately reflects state at that point; mutations on the pointee do
@@ -209,6 +217,66 @@ func (e EventNotice[S, E, C]) String() string {
 		return fmt.Sprintf("event[%s]: %s reason=%s", e.ActorID, e.Event, e.Reason)
 	}
 	return fmt.Sprintf("event[%s]: %s", e.ActorID, e.Event)
+}
+
+// MultiObserver fans every [Observer] callback out to its underlying observers
+// in order. It is useful when more than one consumer wants the lifecycle
+// stream — for example, a [RecordingObserver] for tests alongside a custom
+// observer that emits OpenTelemetry spans:
+//
+//	gstate.Start(m, ctx, m.WithObserver(
+//	    gstate.MultiObserver[S, E, C]{logger, recorder, tracer},
+//	))
+//
+// Members are dispatched in slice order; each member's callback completes
+// before the next runs. MultiObserver inherits the threading contract on
+// [Observer]: a slow or panicking member blocks the actor.
+type MultiObserver[S ~string, E ~string, C any] []Observer[S, E, C]
+
+func (m MultiObserver[S, E, C]) OnTransition(ctx context.Context, e TransitionEvent[S, E, C]) {
+	for _, o := range m {
+		o.OnTransition(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, C]) {
+	for _, o := range m {
+		o.OnGuardEvaluated(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, C]) {
+	for _, o := range m {
+		o.OnInvokeStarted(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, C]) {
+	for _, o := range m {
+		o.OnInvokeCompleted(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnStateEntered(ctx context.Context, e StateEvent[S, E, C]) {
+	for _, o := range m {
+		o.OnStateEntered(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnStateExited(ctx context.Context, e StateEvent[S, E, C]) {
+	for _, o := range m {
+		o.OnStateExited(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnActionExecuted(ctx context.Context, e ActionEvent[S, E, C]) {
+	for _, o := range m {
+		o.OnActionExecuted(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnEventReceived(ctx context.Context, e EventNotice[S, E, C]) {
+	for _, o := range m {
+		o.OnEventReceived(ctx, e)
+	}
+}
+func (m MultiObserver[S, E, C]) OnEventDropped(ctx context.Context, e EventNotice[S, E, C]) {
+	for _, o := range m {
+		o.OnEventDropped(ctx, e)
+	}
 }
 
 // NopObserver is a zero-cost [Observer] implementation whose methods do nothing.

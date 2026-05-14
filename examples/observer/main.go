@@ -71,9 +71,7 @@ func main() {
 	rec := &gstate.RecordingObserver[State, Event, Context]{}
 
 	actor := gstate.Start(machine, Context{},
-		gstate.WithObserver[State, Event, Context](
-			multiObserver{logger, rec},
-		),
+		machine.WithObserver(gstate.MultiObserver[State, Event, Context]{logger, rec}),
 	)
 	defer actor.Stop()
 
@@ -102,51 +100,3 @@ func main() {
 	}
 }
 
-// multiObserver fans Observer callbacks out to multiple targets.
-type multiObserver []gstate.Observer[State, Event, Context]
-
-func (m multiObserver) OnTransition(ctx context.Context, e gstate.TransitionEvent[State, Event, Context]) {
-	for _, o := range m {
-		o.OnTransition(ctx, e)
-	}
-}
-func (m multiObserver) OnGuardEvaluated(ctx context.Context, e gstate.GuardEvent[State, Event, Context]) {
-	for _, o := range m {
-		o.OnGuardEvaluated(ctx, e)
-	}
-}
-func (m multiObserver) OnInvokeStarted(ctx context.Context, e gstate.InvokeEvent[State, Event, Context]) {
-	for _, o := range m {
-		o.OnInvokeStarted(ctx, e)
-	}
-}
-func (m multiObserver) OnInvokeCompleted(ctx context.Context, e gstate.InvokeEvent[State, Event, Context]) {
-	for _, o := range m {
-		o.OnInvokeCompleted(ctx, e)
-	}
-}
-func (m multiObserver) OnStateEntered(ctx context.Context, e gstate.StateEvent[State, Event, Context]) {
-	for _, o := range m {
-		o.OnStateEntered(ctx, e)
-	}
-}
-func (m multiObserver) OnStateExited(ctx context.Context, e gstate.StateEvent[State, Event, Context]) {
-	for _, o := range m {
-		o.OnStateExited(ctx, e)
-	}
-}
-func (m multiObserver) OnActionExecuted(ctx context.Context, e gstate.ActionEvent[State, Event, Context]) {
-	for _, o := range m {
-		o.OnActionExecuted(ctx, e)
-	}
-}
-func (m multiObserver) OnEventReceived(ctx context.Context, e gstate.EventNotice[State, Event, Context]) {
-	for _, o := range m {
-		o.OnEventReceived(ctx, e)
-	}
-}
-func (m multiObserver) OnEventDropped(ctx context.Context, e gstate.EventNotice[State, Event, Context]) {
-	for _, o := range m {
-		o.OnEventDropped(ctx, e)
-	}
-}

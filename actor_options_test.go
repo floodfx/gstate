@@ -37,7 +37,7 @@ func TestStartActorIDsAreDistinct(t *testing.T) {
 
 func TestWithActorIDOverride(t *testing.T) {
 	m := tinyMachine()
-	a := Start(m, Context{}, WithActorID[StateID, EventID, Context]("custom-id"))
+	a := Start(m, Context{}, m.WithActorID("custom-id"))
 	defer a.Stop()
 	if a.ID() != "custom-id" {
 		t.Errorf("ID() = %q, want %q", a.ID(), "custom-id")
@@ -46,7 +46,7 @@ func TestWithActorIDOverride(t *testing.T) {
 
 func TestWithMailboxSize(t *testing.T) {
 	m := tinyMachine()
-	a := Start(m, Context{}, WithMailboxSize[StateID, EventID, Context](7))
+	a := Start(m, Context{}, m.WithMailboxSize(7))
 	defer a.Stop()
 	if got := cap(a.mailbox); got != 7 {
 		t.Errorf("mailbox cap = %d, want 7", got)
@@ -56,7 +56,7 @@ func TestWithMailboxSize(t *testing.T) {
 func TestWithObserverInstalled(t *testing.T) {
 	m := tinyMachine()
 	rec := &RecordingObserver[StateID, EventID, Context]{}
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(rec))
 	defer a.Stop()
 	if a.observer != rec {
 		t.Errorf("observer not installed; got %T", a.observer)

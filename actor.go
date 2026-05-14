@@ -70,29 +70,38 @@ type config[S ~string, E ~string, C any] struct {
 	actorID     ActorID
 }
 
-// Option configures an [Actor] at [Start] time. The provided helpers
-// ([WithMailboxSize], [WithObserver], [WithActorID]) are the supported ways
-// to construct one.
+// Option configures an [Actor] at [Start] or [Hydrate] time. Options are
+// constructed via methods on a typed [Machine] — [Machine.WithMailboxSize],
+// [Machine.WithObserver], [Machine.WithActorID] — which lets Go infer the
+// [S, E, C] type parameters from the machine so the call site needs no
+// annotations:
+//
+//	actor := gstate.Start(m, ctx,
+//	    m.WithMailboxSize(500),
+//	    m.WithObserver(obs),
+//	    m.WithActorID("worker-42"),
+//	)
 type Option[S ~string, E ~string, C any] func(*config[S, E, C])
 
-// WithMailboxSize sets the buffered capacity of the actor's event channel.
-// When omitted, the default is 100. Values <= 0 fall back to the default.
-func WithMailboxSize[S ~string, E ~string, C any](n int) Option[S, E, C] {
+// WithMailboxSize returns an [Option] that sets the buffered capacity of the
+// actor's event channel. When omitted, the default is 100. Values <= 0 fall
+// back to the default.
+func (m *Machine[S, E, C]) WithMailboxSize(n int) Option[S, E, C] {
 	return func(c *config[S, E, C]) { c.mailboxSize = n }
 }
 
-// WithObserver installs an [Observer] that receives lifecycle callbacks for
-// the actor. When omitted, a no-op observer is used. The observer is invoked
-// synchronously on the actor's event-processing goroutine; see [Observer] for
-// the full threading contract.
-func WithObserver[S ~string, E ~string, C any](obs Observer[S, E, C]) Option[S, E, C] {
+// WithObserver returns an [Option] that installs an [Observer] receiving
+// lifecycle callbacks for the actor. When omitted, a no-op observer is used.
+// The observer is invoked synchronously on the actor's event-processing
+// goroutine; see [Observer] for the full threading contract.
+func (m *Machine[S, E, C]) WithObserver(obs Observer[S, E, C]) Option[S, E, C] {
 	return func(c *config[S, E, C]) { c.observer = obs }
 }
 
-// WithActorID overrides the auto-generated [ActorID] for the actor. When
-// omitted, a fresh ID is generated with nanoid. Supplying an empty string is
-// treated as "no override".
-func WithActorID[S ~string, E ~string, C any](id ActorID) Option[S, E, C] {
+// WithActorID returns an [Option] that overrides the auto-generated [ActorID]
+// for the actor. When omitted, a fresh ID is generated with nanoid. Supplying
+// an empty string is treated as "no override".
+func (m *Machine[S, E, C]) WithActorID(id ActorID) Option[S, E, C] {
 	return func(c *config[S, E, C]) { c.actorID = id }
 }
 
@@ -142,6 +151,12 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 // without re-executing state entry actions. The same [Option] set as [Start]
 // is accepted so callers can attach an observer or tune the mailbox on a
 // hydrated actor.
+//
+// Hydrate does not fire [Observer.OnStateEntered] or [Observer.OnTransition]
+// for the states restored from the snapshot — those events represent the
+// original state changes that were already observed before the snapshot was
+// captured. Hooks resume firing on the next event, Always evaluation, or
+// invoke completion handled by the hydrated actor.
 //
 // The [ActorID] is resolved in priority order: [WithActorID] if supplied,
 // otherwise the ActorID stored in the snapshot.
@@ -238,17 +253,17 @@ func (a *Actor[S, E, C]) Context() C {
 }
 
 // restartServices triggers the background tasks (invokes/timers) for a state.
-// ctx is the request-scoped context that triggered entry into this state; it
-// is currently unused inside the method but is plumbed through so future
-// observer hooks (invoke start/complete in M6) can correlate.
+// ctx is the request-scoped context that triggered entry into this state. It
+// is fired through OnInvokeStarted and is the parent of the cancellable
+// invokeCtx passed to invoke.Src, so any trace/span values on ctx propagate
+// to Src as well as to OnInvokeCompleted. Cancelling ctx cancels the invoke.
 func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
-	_ = ctx
 	stateDef := a.machine.States[id]
 	if stateDef == nil { return }
 
 	// Start or restart invoked services
 	if stateDef.Invoke != nil {
-		invokeCtx, cancel := context.WithCancel(context.Background())
+		invokeCtx, cancel := context.WithCancel(ctx)
 		a.invocations[id] = cancel
 		start := time.Now()
 		a.observer.OnInvokeStarted(ctx, InvokeEvent[S, E, C]{

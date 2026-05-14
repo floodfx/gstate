@@ -3,7 +3,6 @@ package gstate_test
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/floodfx/gstate"
 )
@@ -25,18 +24,35 @@ func buildExampleMachine() *gstate.Machine[myState, myEvent, myCtx] {
 		Build()
 }
 
+// transitionBarrier is a channel-backed observer used by examples to wait
+// deterministically for OnTransition without time.Sleep / polling.
+type transitionBarrier struct {
+	gstate.NopObserver[myState, myEvent, myCtx]
+	done chan struct{}
+}
+
+func (b *transitionBarrier) OnTransition(_ context.Context, _ gstate.TransitionEvent[myState, myEvent, myCtx]) {
+	select {
+	case b.done <- struct{}{}:
+	default:
+	}
+}
+
 // ExampleRecordingObserver attaches a RecordingObserver to a tiny machine,
-// sends one event, and prints the kinds of lifecycle events recorded.
+// sends one event, and prints the kinds of lifecycle events recorded. A
+// transitionBarrier composed via MultiObserver synchronises the example so
+// it doesn't need a sleep.
 func ExampleRecordingObserver() {
 	rec := &gstate.RecordingObserver[myState, myEvent, myCtx]{}
-	a := gstate.Start(buildExampleMachine(), myCtx{},
-		gstate.WithObserver[myState, myEvent, myCtx](rec),
+	bar := &transitionBarrier{done: make(chan struct{}, 1)}
+	m := buildExampleMachine()
+	a := gstate.Start(m, myCtx{},
+		m.WithObserver(gstate.MultiObserver[myState, myEvent, myCtx]{rec, bar}),
 	)
 	defer a.Stop()
 
 	a.Send("GO")
-	// Wait deterministically for the OnTransition that closes the sequence.
-	waitFor(rec, gstate.KindTransition, time.Second)
+	<-bar.done // deterministic: blocks until OnTransition fires
 
 	for _, ev := range rec.Events() {
 		fmt.Println(ev.Kind)
@@ -49,20 +65,6 @@ func ExampleRecordingObserver() {
 	// action
 	// state_entered
 	// transition
-}
-
-// waitFor blocks until the recorder has seen at least one event of the given
-// kind, or the timeout elapses. It polls because the recorder's API is
-// snapshot-based; for production code a channel-backed observer (see
-// ExampleObserver) is the better synchronisation pattern.
-func waitFor(rec *gstate.RecordingObserver[myState, myEvent, myCtx], kind string, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if len(rec.Events(kind)) > 0 {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 // loggingObserver embeds NopObserver and overrides only OnTransition. It
@@ -81,19 +83,12 @@ func (l *loggingObserver) OnTransition(_ context.Context, e gstate.TransitionEve
 // implementing only a subset of Observer methods.
 func ExampleObserver() {
 	obs := &loggingObserver{lines: make(chan string, 4)}
-	a := gstate.Start(buildExampleMachine(), myCtx{},
-		gstate.WithObserver[myState, myEvent, myCtx](obs),
-	)
+	m := buildExampleMachine()
+	a := gstate.Start(m, myCtx{}, m.WithObserver(obs))
 	defer a.Stop()
 
 	a.Send("GO")
-
-	select {
-	case line := <-obs.lines:
-		fmt.Println(line)
-	case <-time.After(time.Second):
-		fmt.Println("(timed out)")
-	}
+	fmt.Println(<-obs.lines)
 	// Output:
 	// idle --GO--> active
 }

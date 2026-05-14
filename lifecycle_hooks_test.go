@@ -2,7 +2,6 @@ package gstate
 
 import (
 	"testing"
-	"time"
 )
 
 // guardedMachine builds a tiny machine with a guarded transition that has an action.
@@ -24,29 +23,15 @@ func guardedMachine(allow bool) *Machine[StateID, EventID, Context] {
 		Build()
 }
 
-func waitForKind(t *testing.T, rec *RecordingObserver[StateID, EventID, Context], kind string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if len(rec.Events(kind)) > 0 {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s event", kind)
-}
-
 func TestLifecycleHooksHappyPathOrder(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
+	bar := newKindBarrier(KindTransition, 1)
 	m := guardedMachine(true)
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
 	defer a.Stop()
 
-	// initial entry of "a" should have fired before Send.
-	waitForKind(t, rec, KindStateEntered, time.Second)
-
 	a.Send("GO")
-	waitForKind(t, rec, KindTransition, time.Second)
+	<-bar.done // blocks until OnTransition fires (after the full sequence)
 
 	// Sequence after Send (entry of "a" already happened pre-Send):
 	// EventReceived, GuardEvaluated(true), StateExited(a), ActionExecuted, StateEntered(b), Transition
@@ -108,13 +93,13 @@ func kinds(evs []RecordedEvent) []string {
 
 func TestGuardFailEmitsFalseAndDoesNotTransition(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
+	bar := newKindBarrier(KindEventDropped, 1)
 	m := guardedMachine(false)
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
 	defer a.Stop()
-	waitForKind(t, rec, KindStateEntered, time.Second)
 
 	a.Send("GO")
-	waitForKind(t, rec, KindEventDropped, time.Second)
+	<-bar.done
 
 	if got := rec.Guards(); len(got) != 1 || got[0].Result {
 		t.Errorf("expected single guard with Result=false; got %+v", got)
@@ -129,13 +114,13 @@ func TestGuardFailEmitsFalseAndDoesNotTransition(t *testing.T) {
 
 func TestEventDroppedOnUnknownEvent(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
+	bar := newKindBarrier(KindEventDropped, 1)
 	m := guardedMachine(true)
-	a := Start(m, Context{}, WithObserver[StateID, EventID, Context](rec))
+	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
 	defer a.Stop()
-	waitForKind(t, rec, KindStateEntered, time.Second)
 
 	a.Send("UNKNOWN")
-	waitForKind(t, rec, KindEventDropped, time.Second)
+	<-bar.done
 
 	if got := rec.EventsDropped(); len(got) != 1 || got[0].Event != "UNKNOWN" {
 		t.Errorf("dropped: %+v", got)
