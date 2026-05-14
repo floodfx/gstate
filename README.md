@@ -291,6 +291,77 @@ s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 
 ---
 
+## 11. Observing Lifecycle Events
+
+When you want to record transitions, guard outcomes, state entries/exits, transition actions, and invoked services — for telemetry, tracing, audit logs, or just to debug what your machine is doing — you do **not** need to wrap every `Entry`, `Exit`, `Guard`, and `Invoke` by hand. Pass an `Observer` to `Start`:
+
+```go
+obs := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
+actor := gstate.Start(machine, MyContext{},
+    gstate.WithObserver[MyState, MyEvent, MyContext](obs),
+)
+```
+
+The nine hooks on `Observer[S, E, C]`:
+
+| Hook | Fires when |
+|---|---|
+| `OnEventReceived` | An event lands in the mailbox and is about to be processed |
+| `OnGuardEvaluated` | A non-nil `Guard` was evaluated (carries the boolean result) |
+| `OnEventDropped` | An event was processed but no transition fired (`Reason: "no_transition"`) |
+| `OnStateExited` | A state's `Exit` actions completed and the state was removed from `active` |
+| `OnActionExecuted` | A transition's `Action` (Assign) completed |
+| `OnStateEntered` | A state's `Entry` actions completed and the state is now `active` |
+| `OnTransition` | A transition fully resolved (after all exits + entries) |
+| `OnInvokeStarted` | An invoked service goroutine was launched |
+| `OnInvokeCompleted` | An invoked service returned (success, error, or cancellation) |
+
+### Threading and locking contract
+
+- All callbacks except `OnInvokeStarted` / `OnInvokeCompleted` run **synchronously on the actor's event-processing goroutine** while it holds the actor's internal write lock. Implementations must be non-blocking.
+- Observers **must not** call methods on the same `Actor` that would re-enter the actor lock (e.g. `Snapshot()`, `State()`). They may call `Send` / `SendCtx`, which only enqueue.
+- The `Context *C` field on each payload references the actor's live context. **Do not mutate it.**
+- `OnInvokeStarted` / `OnInvokeCompleted` fire from the invoke goroutine and do not hold the actor lock.
+
+### Implementing only the methods you care about (`NopObserver`)
+
+Embed `NopObserver[S, E, C]` to satisfy the interface with no-ops, then override what you want:
+
+```go
+type loggingObs struct {
+    gstate.NopObserver[MyState, MyEvent, MyContext]
+}
+
+func (l *loggingObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) {
+    log.Printf("[%s] %s --%s--> %s", e.ActorID, e.From, e.Event, e.To)
+}
+```
+
+### Inspecting behavior with `RecordingObserver`
+
+`RecordingObserver[S, E, C]` captures every callback into a thread-safe log. It is useful in tests and for ad-hoc debugging:
+
+```go
+rec := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
+actor := gstate.Start(machine, MyContext{},
+    gstate.WithObserver[MyState, MyEvent, MyContext](rec),
+)
+actor.Send(EventGo)
+
+for _, t := range rec.Transitions() {
+    fmt.Printf("%s -> %s on %s\n", t.From, t.To, t.Event)
+}
+
+// or by kind:
+for _, ev := range rec.Events(gstate.KindGuardEvaluated, gstate.KindTransition) {
+    fmt.Printf("%s @ %s: %+v\n", ev.Kind, ev.Timestamp.Format(time.RFC3339Nano), ev.Payload)
+}
+```
+
+> **Try it:** [observer example](./examples/observer) — attach a `RecordingObserver` to a small machine and print the lifecycle log.
+
+---
+
 ## The Actor: Running a Machine
 
 A `Machine` is a static blueprint. To actually run it, you create an **Actor**. The Actor holds the live state, processes events, and manages async services.
@@ -298,14 +369,33 @@ A `Machine` is a static blueprint. To actually run it, you create an **Actor**. 
 ### Creating an Actor
 
 ```go
-// Start with default options (mailbox size of 100)
+// Start with default options
 actor := gstate.Start(machine, MyContext{Count: 0})
 
-// Or start with custom options
-actor := gstate.StartWithOptions(machine, MyContext{Count: 0}, gstate.Options{
-    MailboxSize: 500,
-})
+// Or with one or more functional options
+actor := gstate.Start(machine, MyContext{Count: 0},
+    gstate.WithMailboxSize[MyState, MyEvent, MyContext](500),
+    gstate.WithObserver[MyState, MyEvent, MyContext](myObs),
+    gstate.WithActorID[MyState, MyEvent, MyContext]("worker-42"),
+)
 ```
+
+Available options:
+
+- `WithMailboxSize(n)` — buffered capacity for the event channel. Default `100`.
+- `WithObserver(obs)` — install an [`Observer`](#11-observing-lifecycle-events). Default is a no-op.
+- `WithActorID(id)` — override the auto-generated [`ActorID`](#actor-identity).
+
+### Actor Identity
+
+Every actor is born with a stable `ActorID`. When you don't supply one via `WithActorID`, `Start` generates a short URL-safe nanoid:
+
+```go
+actor := gstate.Start(machine, MyContext{})
+fmt.Println(actor.ID()) // e.g. "V1StGXR8_Z5j"
+```
+
+`ActorID` is the correlation key surfaced in every `Observer` payload. It is **preserved across `Snapshot` / `Hydrate`** so the same logical actor keeps its identity across restarts.
 
 ### Sending Events
 
@@ -315,6 +405,17 @@ actor.Send(EventStart)
 ```
 
 Events are queued in a channel-based mailbox and processed sequentially, ensuring state transitions are never concurrent.
+
+### Request-Scoped Context
+
+To attach a `context.Context` to an event — for tracing IDs, request deadlines, or any value you want delivered to observer callbacks — use `SendCtx`:
+
+```go
+ctx := tracing.ContextWithSpan(req.Context(), span)
+actor.SendCtx(ctx, EventDoTheThing)
+```
+
+The provided `ctx` is delivered as the first argument to every `Observer` callback fired in response to this event, including Always transitions chained after it. `Send(event)` is a thin wrapper around `SendCtx(context.Background(), event)`.
 
 ### Reading State
 
@@ -367,8 +468,9 @@ A `Snapshot` contains:
 - **`Active []S`** — all currently active states
 - **`History map[S]S`** — the history map (parent → remembered child)
 - **`Context C`** — the context data
+- **`ActorID ActorID`** — the producing actor's stable identifier
 
-`Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions.
+`Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID`. For backwards compatibility, snapshots produced before `ActorID` existed (zero value) cause `Hydrate` to mint a fresh ID so the resulting actor always has a non-empty identifier.
 
 > **Try it:** [persistence example](./examples/persistence) — snapshot to JSON and hydrate a new actor.
 
