@@ -1,23 +1,31 @@
 package gstate
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestSelfTransitionReEntry(t *testing.T) {
-	entryCount := 0
-	exitCount := 0
+	// Counters are mutated from the actor goroutine inside Entry/Exit and read
+	// from the test goroutine. Use atomic.Int32 so -race stays clean.
+	var entryCount, exitCount atomic.Int32
+
+	// reentered is closed when the self-transition's re-entry fires, so the
+	// test waits deterministically without a sleep.
+	reentered := make(chan struct{})
 
 	machine := New[string, string, any]("self-trans").
 		Initial("active").
 		State("active", func(s *StateBuilder[string, string, any]) {
 			s.Entry(func(c any) any {
-				entryCount++
+				if entryCount.Add(1) == 2 {
+					close(reentered)
+				}
 				return c
 			})
 			s.Exit(func(c any) any {
-				exitCount++
+				exitCount.Add(1)
 				return c
 			})
 			s.On("RETRY").GoTo("active") // Self-transition
@@ -25,21 +33,22 @@ func TestSelfTransitionReEntry(t *testing.T) {
 		Build()
 
 	actor := Start(machine, nil)
-	// Initial entry
-	if entryCount != 1 {
-		t.Errorf("Expected initial entry count 1, got %d", entryCount)
+	defer actor.Stop()
+
+	// Initial entry happens synchronously inside Start.
+	if got := entryCount.Load(); got != 1 {
+		t.Errorf("Expected initial entry count 1, got %d", got)
 	}
 
 	actor.Send("RETRY")
-	time.Sleep(10 * time.Millisecond)
+	<-reentered // blocks until the re-entry's Entry closure has run
 
 	// In a proper external self-transition, we expect Exit then Entry again.
-	// Current implementation likely treats this as internal (no exit/entry).
-	if exitCount != 1 {
-		t.Errorf("Expected exit count 1 (self-transition), got %d", exitCount)
+	if got := exitCount.Load(); got != 1 {
+		t.Errorf("Expected exit count 1 (self-transition), got %d", got)
 	}
-	if entryCount != 2 {
-		t.Errorf("Expected entry count 2 (re-entry), got %d", entryCount)
+	if got := entryCount.Load(); got != 2 {
+		t.Errorf("Expected entry count 2 (re-entry), got %d", got)
 	}
 }
 
