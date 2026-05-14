@@ -143,14 +143,8 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 // is accepted so callers can attach an observer or tune the mailbox on a
 // hydrated actor.
 //
-// The [ActorID] is resolved as follows, in priority order:
-//
-//  1. [WithActorID] if supplied.
-//  2. The ActorID stored in the snapshot.
-//  3. A freshly generated nanoid (e.g. when restoring legacy snapshots with
-//     no ActorID field populated).
-//
-// This guarantees the resulting actor always has a non-empty identifier.
+// The [ActorID] is resolved in priority order: [WithActorID] if supplied,
+// otherwise the ActorID stored in the snapshot.
 func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot[S, C], opts ...Option[S, E, C]) *Actor[S, E, C] {
 	cfg := config[S, E, C]{mailboxSize: defaultMailboxSize}
 	for _, o := range opts {
@@ -168,13 +162,9 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 		active[sID] = true
 	}
 
-	// Precedence: explicit WithActorID > snapshot > freshly generated.
 	id := cfg.actorID
 	if id == "" {
 		id = snapshot.ActorID
-	}
-	if id == "" {
-		id = ActorID(idGen())
 	}
 
 	a := &Actor[S, E, C]{

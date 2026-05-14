@@ -490,7 +490,7 @@ A `Snapshot` contains:
 - **`Context C`** — the context data
 - **`ActorID ActorID`** — the producing actor's stable identifier
 
-`Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID`. For backwards compatibility, snapshots produced before `ActorID` existed (zero value) cause `Hydrate` to mint a fresh ID so the resulting actor always has a non-empty identifier.
+`Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID` from the snapshot.
 
 `Hydrate` accepts the same functional options as `Start`, so you can attach an observer or tune the mailbox on a restored actor:
 

@@ -29,21 +29,6 @@ func TestHydrateRestoresActorID(t *testing.T) {
 	}
 }
 
-func TestHydrateMintsIDWhenSnapshotEmpty(t *testing.T) {
-	m := tinyMachine()
-	// Simulate a legacy snapshot with no ActorID field populated.
-	legacy := Snapshot[StateID, Context]{
-		Active:  []StateID{"a"},
-		History: map[StateID]StateID{},
-		Context: Context{},
-	}
-	a := Hydrate(m, legacy)
-	defer a.Stop()
-	if a.ID() == "" {
-		t.Error("expected fresh ActorID when snapshot ActorID is empty")
-	}
-}
-
 func TestHydrateAcceptsObserverOption(t *testing.T) {
 	m := tinyMachine()
 	a := Start(m, Context{})

@@ -126,7 +126,5 @@ type Snapshot[S ~string, C any] struct {
 	Context C `json:"context"`
 	// ActorID is the stable identifier of the actor that produced this snapshot.
 	// [Hydrate] restores it so telemetry correlation survives serialization.
-	// Snapshots produced before this field existed deserialize as the zero
-	// value; [Hydrate] mints a fresh ID in that case.
 	ActorID ActorID `json:"actor_id,omitempty"`
 }
