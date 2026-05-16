@@ -343,6 +343,36 @@ func (l *loggingObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[
 }
 ```
 
+### Wake on any lifecycle event with `SignalObserver`
+
+```go
+ready := make(chan struct{}, 1)
+obs := gstate.SignalObserver[MyState, MyEvent, MyContext](func() {
+    select { case ready <- struct{}{}: default: }
+})
+actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
+actor.Send(EventGo)
+<-ready // deterministically woken by the first lifecycle callback
+```
+
+Every callback on `SignalObserver` calls the supplied function. The callback's context and typed payload are discarded — `SignalObserver` is intentionally minimal. If you need them, use `ObserverFuncs` (below). The signal function must be non-blocking — observer callbacks run synchronously under the actor's write lock.
+
+### Avoid `NopObserver` boilerplate with `ObserverFuncs`
+
+```go
+obs := gstate.ObserverFuncs[MyState, MyEvent, MyContext]{
+    AnyFunc: func(ctx context.Context) {
+        // fires for every callback
+    },
+    TransitionFunc: func(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) {
+        log.Printf("[%s] %s --%s--> %s", e.ActorID, e.From, e.Event, e.To)
+    },
+}
+actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
+```
+
+`ObserverFuncs` is a struct of optional function fields plus a generic `AnyFunc`. Each callback dispatches to `AnyFunc` first (if set), then to the kind-specific field (if set). Nil fields are no-ops. Useful when you want a partial observer without embedding `NopObserver`, or when one hook should fire for every event in addition to specific typed handlers.
+
 ### Inspecting behavior with `RecordingObserver`
 
 `RecordingObserver[S, E, C]` captures every callback into a thread-safe log. It is useful in tests and for ad-hoc debugging:

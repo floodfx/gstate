@@ -279,6 +279,161 @@ func (m MultiObserver[S, E, C]) OnEventDropped(ctx context.Context, e EventNotic
 	}
 }
 
+// SignalObserver returns an [Observer] whose every callback calls
+// signal. The context and typed payload arguments are discarded — use
+// [ObserverFuncs] if you need them, or embed [NopObserver] for a full
+// custom implementation.
+//
+// signal must be non-blocking; observer callbacks run under the actor's
+// write lock (see [Observer]'s threading contract). A nil signal makes
+// the returned observer a no-op.
+//
+// Typical use: waking a channel when any lifecycle activity occurs.
+//
+//	ready := make(chan struct{}, 1)
+//	obs := gstate.SignalObserver[MyState, MyEvent, MyContext](func() {
+//	    select { case ready <- struct{}{}: default: }
+//	})
+//	actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
+//	actor.Send(EventGo)
+//	<-ready
+func SignalObserver[S ~string, E ~string, C any](signal func()) Observer[S, E, C] {
+	return signalObserver[S, E, C]{signal: signal}
+}
+
+type signalObserver[S ~string, E ~string, C any] struct {
+	signal func()
+}
+
+func (o signalObserver[S, E, C]) fire() {
+	if o.signal != nil {
+		o.signal()
+	}
+}
+
+func (o signalObserver[S, E, C]) OnTransition(context.Context, TransitionEvent[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnGuardEvaluated(context.Context, GuardEvent[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnInvokeStarted(context.Context, InvokeEvent[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnInvokeCompleted(context.Context, InvokeEvent[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnStateEntered(context.Context, StateEvent[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnStateExited(context.Context, StateEvent[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnActionExecuted(context.Context, ActionEvent[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnEventReceived(context.Context, EventNotice[S, E, C]) {
+	o.fire()
+}
+func (o signalObserver[S, E, C]) OnEventDropped(context.Context, EventNotice[S, E, C]) {
+	o.fire()
+}
+
+// ObserverFuncs is a function-field adapter that implements [Observer]
+// without forcing callers to embed [NopObserver] and override the
+// callbacks they care about. Each lifecycle method dispatches first to
+// AnyFunc (if non-nil), then to the kind-specific field (if non-nil);
+// nil fields are no-ops.
+//
+//	obs := gstate.ObserverFuncs[MyState, MyEvent, MyContext]{
+//	    AnyFunc:        func(ctx context.Context) { /* ... */ },
+//	    TransitionFunc: func(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) { /* ... */ },
+//	}
+//	actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
+//
+// ObserverFuncs values are passed by value; the implementation uses
+// value receivers. Do not mutate fields after installing on an actor.
+// Callback bodies must be non-blocking — see [Observer]'s threading
+// contract.
+type ObserverFuncs[S ~string, E ~string, C any] struct {
+	// AnyFunc fires for every lifecycle callback before the
+	// kind-specific field (if any). Useful as a single "something
+	// happened" hook for waiters and counters that still want the
+	// originating context.
+	AnyFunc func(context.Context)
+
+	TransitionFunc      func(context.Context, TransitionEvent[S, E, C])
+	GuardEvaluatedFunc  func(context.Context, GuardEvent[S, E, C])
+	InvokeStartedFunc   func(context.Context, InvokeEvent[S, E, C])
+	InvokeCompletedFunc func(context.Context, InvokeEvent[S, E, C])
+	StateEnteredFunc    func(context.Context, StateEvent[S, E, C])
+	StateExitedFunc     func(context.Context, StateEvent[S, E, C])
+	ActionExecutedFunc  func(context.Context, ActionEvent[S, E, C])
+	EventReceivedFunc   func(context.Context, EventNotice[S, E, C])
+	EventDroppedFunc    func(context.Context, EventNotice[S, E, C])
+}
+
+func (o ObserverFuncs[S, E, C]) any(ctx context.Context) {
+	if o.AnyFunc != nil {
+		o.AnyFunc(ctx)
+	}
+}
+
+func (o ObserverFuncs[S, E, C]) OnTransition(ctx context.Context, e TransitionEvent[S, E, C]) {
+	o.any(ctx)
+	if o.TransitionFunc != nil {
+		o.TransitionFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, C]) {
+	o.any(ctx)
+	if o.GuardEvaluatedFunc != nil {
+		o.GuardEvaluatedFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, C]) {
+	o.any(ctx)
+	if o.InvokeStartedFunc != nil {
+		o.InvokeStartedFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, C]) {
+	o.any(ctx)
+	if o.InvokeCompletedFunc != nil {
+		o.InvokeCompletedFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnStateEntered(ctx context.Context, e StateEvent[S, E, C]) {
+	o.any(ctx)
+	if o.StateEnteredFunc != nil {
+		o.StateEnteredFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnStateExited(ctx context.Context, e StateEvent[S, E, C]) {
+	o.any(ctx)
+	if o.StateExitedFunc != nil {
+		o.StateExitedFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnActionExecuted(ctx context.Context, e ActionEvent[S, E, C]) {
+	o.any(ctx)
+	if o.ActionExecutedFunc != nil {
+		o.ActionExecutedFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnEventReceived(ctx context.Context, e EventNotice[S, E, C]) {
+	o.any(ctx)
+	if o.EventReceivedFunc != nil {
+		o.EventReceivedFunc(ctx, e)
+	}
+}
+func (o ObserverFuncs[S, E, C]) OnEventDropped(ctx context.Context, e EventNotice[S, E, C]) {
+	o.any(ctx)
+	if o.EventDroppedFunc != nil {
+		o.EventDroppedFunc(ctx, e)
+	}
+}
+
 // NopObserver is a zero-cost [Observer] implementation whose methods do nothing.
 // Embed it to implement only the callbacks you care about:
 //
