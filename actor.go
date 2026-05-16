@@ -636,6 +636,11 @@ func (a *Actor[S, E, C]) handleEvent(ctx context.Context, event E) {
 	// Bubble up: check transitions from deepest state to root
 	for _, sID := range activeStates {
 		stateDef := a.machine.States[sID]
+		if stateDef == nil {
+			// Hydrate accepts arbitrary Active state IDs; ignore any
+			// that don't correspond to a state in this machine.
+			continue
+		}
 		if transitions, ok := stateDef.Transitions[event]; ok {
 			for _, t := range transitions {
 				if t.Guard != nil {
