@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"ACtive\":[\"\xff\"],\"h\x98\x98\x98\x98istzry\":{\"\":\"\x80\"}}")

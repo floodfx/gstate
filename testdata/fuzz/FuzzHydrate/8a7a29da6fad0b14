@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"active\":[\"\xd0\xd0\xd000\",\"loadzng\",\"idle\"]}")
