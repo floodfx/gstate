@@ -427,11 +427,13 @@ fmt.Println(actor.ID()) // e.g. "V1StGXR8_Z5j"
 ### Sending Events
 
 ```go
-actor.Send(EventIncrement)
-actor.Send(EventStart)
+actor.Send(EventIncrement)            // fire-and-forget
+err := actor.SendCtx(ctx, EventStart) // ctx-honoring, returns error
 ```
 
 Events are queued in a channel-based mailbox and processed sequentially, ensuring state transitions are never concurrent.
+
+`Send` is a thin wrapper around `SendCtx(context.Background(), event)` that discards the returned error. Use it when you don't have a request-scoped context and don't need to react to delivery failure. After `Stop` it is a no-op (no panic, no delivery).
 
 ### Request-Scoped Context
 
@@ -439,10 +441,18 @@ To attach a `context.Context` to an event — for tracing IDs, request deadlines
 
 ```go
 ctx := tracing.ContextWithSpan(req.Context(), span)
-actor.SendCtx(ctx, EventDoTheThing)
+if err := actor.SendCtx(ctx, EventDoTheThing); err != nil {
+    // event was not delivered; err tells you why
+}
 ```
 
-The provided `ctx` is delivered as the first argument to every `Observer` callback fired in response to this event, including Always transitions chained after it. `Send(event)` is a thin wrapper around `SendCtx(context.Background(), event)`.
+The provided `ctx` is threaded into every `Observer` callback fired in response to this event (including Always transitions chained after it), **and** it gates the enqueue itself. `SendCtx` returns:
+
+- `nil` when the event was enqueued.
+- `ctx.Err()` (`context.Canceled` or `context.DeadlineExceeded`) when the supplied context was cancelled or its deadline elapsed before enqueue. The event is **not** delivered.
+- `gstate.ErrActorStopped` when `Stop` was called before enqueue. The event is **not** delivered.
+
+When the mailbox is full, `SendCtx` blocks until a slot opens, the context is done, or the actor is stopped. It never blocks forever.
 
 ### Reading State
 
@@ -487,7 +497,7 @@ actor.Stop()
 | Goroutines you spawned yourself from inside an action, guard, or invoke (e.g. `go publishMetric(c)` inside an `Assign`) | The actor has no handle on them. If the work must finish before `Stop` returns, do it inside an `Invoke` `Src` whose return is awaited, not in a fire-and-forget goroutine. |
 | `time.AfterFunc` callbacks for delayed transitions that were already firing when `Stop` ran | They no-op via the actor's inactive-state check in `executeInternalTransition`, but they run on Go's internal timer pool and aren't tracked. The side effect is harmless. |
 
-**Send after Stop is a no-op.** `Send` and `SendCtx` called after `Stop` (or concurrently with `Stop` past the point of shutdown signalling) return without delivering the event and without panicking.
+**Send after Stop is a no-op.** `Send` swallows any error and returns; `SendCtx` returns `gstate.ErrActorStopped` so callers can detect that the event was not delivered. Neither will panic.
 
 **Tip — guaranteeing cleanup work runs:** if you need work to complete before shutdown (flush a buffer, commit a transaction), model it as an `Invoke`. Your `Src` function should observe `ctx.Done()`, do its cleanup, and return. `Stop` will wait for it.
 

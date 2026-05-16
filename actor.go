@@ -2,12 +2,19 @@ package gstate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	nanoid "github.com/jaevor/go-nanoid"
 )
+
+// ErrActorStopped is returned by [Actor.SendCtx] when the actor has already
+// been stopped and the event cannot be delivered. It is distinct from a
+// context-cancelled error so callers can branch on the reason an event
+// was not delivered.
+var ErrActorStopped = errors.New("gstate: actor stopped")
 
 // defaultMailboxSize is the buffer size used when [WithMailboxSize] is not set.
 const defaultMailboxSize = 100
@@ -459,29 +466,55 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 }
 
 // Send enqueues an event in the actor's mailbox using [context.Background]
-// as the request-scoped context. It is a thin wrapper over [Actor.SendCtx].
-// Sending to a stopped actor is a no-op (the call returns without delivering
-// the event and without panicking).
+// as the request-scoped context. It is a thin wrapper over [Actor.SendCtx]
+// that discards the returned error; with context.Background the only
+// possible non-nil return is [ErrActorStopped], in which case the send
+// is a no-op per Stop's contract (no panic, no delivery).
+//
+// Callers that need to react to delivery failure should use [Actor.SendCtx]
+// directly.
 func (a *Actor[S, E, C]) Send(event E) {
-	a.SendCtx(context.Background(), event)
+	_ = a.SendCtx(context.Background(), event)
 }
 
 // SendCtx enqueues an event in the actor's mailbox carrying the supplied
-// request-scoped context. The context is delivered to every [Observer]
-// callback fired in response to this event, including Always transitions
-// chained after it.
+// request-scoped context. The context is threaded into every [Observer]
+// callback fired in response to this event (including Always transitions
+// chained after it) AND it gates the enqueue itself.
 //
-// After [Actor.Stop] has signalled shutdown — or while Stop is in progress
-// past that point — SendCtx is a no-op: the event is not delivered and the
-// call returns immediately. There is no error return; callers that need to
-// react to a stopped actor should track shutdown state themselves.
-func (a *Actor[S, E, C]) SendCtx(ctx context.Context, event E) {
+// Returns:
+//   - nil when the event was enqueued.
+//   - ctx.Err() ([context.Canceled] or [context.DeadlineExceeded]) when
+//     the supplied context was cancelled or its deadline elapsed before
+//     the event could be enqueued. The event is NOT delivered.
+//   - [ErrActorStopped] when the actor was stopped before the event could
+//     be enqueued. The event is NOT delivered.
+//
+// Behaviour when the mailbox is full: SendCtx blocks until one of three
+// things happens — a slot opens, ctx is done, or the actor is stopped.
+// It never blocks forever.
+func (a *Actor[S, E, C]) SendCtx(ctx context.Context, event E) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Fast path: bail before enqueueing if ctx or actor is already done.
+	// Without this, the inner select could pick the mailbox-send case
+	// even when ctx is already cancelled (select chooses fairly among
+	// ready cases) and we'd deliver an event whose ctx is dead.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.stopped:
+		return ErrActorStopped
+	default:
+	}
 	select {
 	case a.mailbox <- envelope[E]{ctx: ctx, event: event}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-a.stopped:
+		return ErrActorStopped
 	}
 }
 
