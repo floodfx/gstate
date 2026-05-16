@@ -13,11 +13,11 @@ type MermaidThemeName = basediagram.ThemeName
 
 // Mermaid theme constants matching the five built-in Mermaid themes.
 const (
-	MermaidThemeDefault  MermaidThemeName = basediagram.ThemeDefault
-	MermaidThemeNeutral  MermaidThemeName = basediagram.ThemeNeutral
-	MermaidThemeDark     MermaidThemeName = basediagram.ThemeDark
-	MermaidThemeForest   MermaidThemeName = basediagram.ThemeForest
-	MermaidThemeBase     MermaidThemeName = basediagram.ThemeBase
+	MermaidThemeDefault MermaidThemeName = basediagram.ThemeDefault
+	MermaidThemeNeutral MermaidThemeName = basediagram.ThemeNeutral
+	MermaidThemeDark    MermaidThemeName = basediagram.ThemeDark
+	MermaidThemeForest  MermaidThemeName = basediagram.ThemeForest
+	MermaidThemeBase    MermaidThemeName = basediagram.ThemeBase
 )
 
 // mermaidConfig holds optional configuration for Mermaid diagram rendering.

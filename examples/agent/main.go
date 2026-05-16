@@ -59,7 +59,7 @@ func main() {
 				GoTo(StateDone)
 
 			s.On(EventSuccess).GoTo(StateVerifying)
-			
+
 			s.On(EventRetry).
 				Assign(func(c MyContext) MyContext {
 					c.FixAttempts++

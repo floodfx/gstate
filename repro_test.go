@@ -55,9 +55,9 @@ func TestSelfTransitionReEntry(t *testing.T) {
 func TestInfiniteLoopCircuitBreaker(t *testing.T) {
 	// This test is designed to FAIL (hang) if the circuit breaker is missing.
 	// We'll use a timeout to detect the hang.
-	
+
 	done := make(chan bool)
-	
+
 	go func() {
 		machine := New[string, string, any]("loop").
 			Initial("A").
@@ -71,9 +71,9 @@ func TestInfiniteLoopCircuitBreaker(t *testing.T) {
 
 		Start(machine, nil)
 		// If Start() blocks forever or handleAlwaysInternal loops forever, we won't reach here
-		// Note: Start runs loop in goroutine, but handleAlwaysInternal runs synchronously 
+		// Note: Start runs loop in goroutine, but handleAlwaysInternal runs synchronously
 		// during initial entry!
-		
+
 		done <- true
 	}()
 

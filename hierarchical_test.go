@@ -11,7 +11,7 @@ func TestActorHierarchical(t *testing.T) {
 		State("parent", func(s *StateBuilder[StateID, EventID, Context]) {
 			s.Initial("child1")
 			s.On("TO_OTHER").GoTo("other")
-			
+
 			s.State("child1", func(s *StateBuilder[StateID, EventID, Context]) {
 				s.On("TO_CHILD2").GoTo("child2")
 			})
@@ -25,11 +25,11 @@ func TestActorHierarchical(t *testing.T) {
 		Build()
 
 	actor := Start(m, Context{})
-	
+
 	// Initial state should be [parent, child1]
 	// But currently our Start only sets a single state ID.
 	// We need to update Start to resolve the initial state stack.
-	
+
 	states := actor.States()
 	if len(states) != 2 || states[0] != "parent" || states[1] != "child1" {
 		t.Errorf("Expected initial state stack [parent, child1], got %v", states)

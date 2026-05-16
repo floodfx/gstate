@@ -33,7 +33,6 @@ func main() {
 	// 3. Build the Machine using the defined constants.
 	machine := gstate.New[MyState, MyEvent, MyContext]("counter").
 		Initial(StateIdle).
-		
 		State(StateIdle, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.On(EventIncrement).
 				Assign(func(c MyContext) MyContext {
@@ -41,10 +40,9 @@ func main() {
 					fmt.Printf("[idle] Incremented count to: %d\n", c.Count)
 					return c
 				})
-			
+
 			s.On(EventStart).GoTo(StateActive)
 		}).
-
 		State(StateActive, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			s.Entry(func(c MyContext) MyContext {
 				fmt.Println("[active] Entering state...")
@@ -66,7 +64,7 @@ func main() {
 	// 4. Send Events using constants
 	actor.Send(EventIncrement)
 	actor.Send(EventIncrement)
-	
+
 	time.Sleep(10 * time.Millisecond)
 	fmt.Printf("Current state: %s, Count: %d\n", actor.State(), actor.Snapshot().Context.Count)
 

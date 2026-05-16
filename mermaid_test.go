@@ -94,7 +94,7 @@ func TestMermaidParallel(t *testing.T) {
 
 	got := ToMermaid(m)
 	assertContains(t, got, "state active {")
-	assertContains(t, got, "--")       // parallel separator
+	assertContains(t, got, "--") // parallel separator
 	assertContains(t, got, "state region1 {")
 	assertContains(t, got, "state region2 {")
 	assertContains(t, got, "r1a --> r1b: NEXT")
@@ -267,7 +267,6 @@ func TestMermaidEntryExit(t *testing.T) {
 	assertContains(t, got, "entry /")
 	assertContains(t, got, "exit /")
 }
-
 
 // --- 13. Options: theme ---
 

@@ -19,16 +19,16 @@ func main() {
 		State("parent", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// Set the default child to enter when 'parent' is entered.
 			s.Initial("child1")
-			
+
 			// Actions defined on a parent run for ALL entries into children.
 			s.Entry(func(c MyContext) MyContext { fmt.Println("[parent] Entering..."); return c })
 			s.Exit(func(c MyContext) MyContext { fmt.Println("[parent] Exiting..."); return c })
-			
+
 			// 2. Event Bubbling:
 			// If a child doesn't handle an event, it "bubbles up" to the parent.
 			// Here, any child receiving 'EXIT_ALL' will cause the parent to transition.
 			s.On("EXIT_ALL").GoTo("done")
-			
+
 			// 3. Nested States (Sub-states)
 			s.State("child1", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 				s.Entry(func(c MyContext) MyContext { fmt.Println("  [child1] Entering..."); return c })
@@ -49,7 +49,7 @@ func main() {
 
 	fmt.Println("--- Starting Actor ---")
 	actor := gstate.Start(machine, nil)
-	
+
 	// actor.States() returns ALL active states from root to leaf.
 	fmt.Printf("Initial States Stack: %v\n", actor.States())
 

@@ -33,7 +33,7 @@ type SCXMLNode struct {
 	Kind        NodeKind           `xml:"-"`
 	ID          string             `xml:"id,attr,omitempty"`
 	Initial     string             `xml:"initial,attr,omitempty"`
-	HistoryMode  string             `xml:"type,attr,omitempty"`
+	HistoryMode string             `xml:"type,attr,omitempty"`
 	OnEntry     *SCXMLOnEntry      `xml:"onentry,omitempty"`
 	OnExit      *SCXMLOnExit       `xml:"onexit,omitempty"`
 	Transitions []*SCXMLTransition `xml:"transition,omitempty"`
@@ -179,7 +179,7 @@ type SCXMLTransition struct {
 
 // SCXMLOnEntry wraps executable content on state entry.
 type SCXMLOnEntry struct {
-	XMLName      xml.Name      `xml:"onentry"`
+	XMLName      xml.Name     `xml:"onentry"`
 	SendElements []*SCXMLSend `xml:"send,omitempty"`
 }
 

@@ -25,7 +25,7 @@ func TestActorInvoke(t *testing.T) {
 		Build()
 
 	actor := Start(m, Context{})
-	
+
 	if actor.State() != "loading" {
 		t.Errorf("Expected state loading, got %s", actor.State())
 	}
@@ -54,7 +54,7 @@ func TestActorInvokeError(t *testing.T) {
 		Build()
 
 	actor := Start(m, Context{})
-	
+
 	time.Sleep(50 * time.Millisecond)
 	if actor.State() != "failure" {
 		t.Errorf("Expected state failure after error, got %s", actor.State())

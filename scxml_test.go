@@ -66,17 +66,6 @@ func collectNodesWhere(nodes []SCXMLNode, fn func(SCXMLNode) bool) []*SCXMLNode 
 	return result
 }
 
-// collectDirectNodesWhere collects nodes matching a predicate from a specific slice only (non-recursive).
-func collectDirectNodesWhere(nodes []SCXMLNode, fn func(SCXMLNode) bool) []*SCXMLNode {
-	var result []*SCXMLNode
-	for i := range nodes {
-		if fn(nodes[i]) {
-			result = append(result, &nodes[i])
-		}
-	}
-	return result
-}
-
 // historyNodesMatching collects <history> nodes with a specific HistoryMode, recursively.
 func historyNodesMatching(nodes []SCXMLNode, mode string) []*SCXMLNode {
 	var result []*SCXMLNode
@@ -544,7 +533,7 @@ func TestSCXMLTransitionActions(t *testing.T) {
 
 	idle := nodeByID(doc.Children, "idle")
 	tr := idle.Transitions[0]
-	if tr.Assign == nil || len(tr.Assign) == 0 {
+	if len(tr.Assign) == 0 {
 		t.Error("expected <assign> element when transition has Action")
 	}
 }
@@ -1179,7 +1168,7 @@ func TestSCXMLActionLabel(t *testing.T) {
 
 	idle := nodeByID(doc.Children, "idle")
 	tr := idle.Transitions[0]
-	if tr.Assign == nil || len(tr.Assign) == 0 {
+	if len(tr.Assign) == 0 {
 		t.Fatal("expected assign element")
 	}
 	if tr.Assign[0].Location != "increment" {
@@ -1264,11 +1253,11 @@ func TestSCXMLDelayedTransitionWithGuardAndAction(t *testing.T) {
 		Initial("idle").
 		State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
 			s.After(500_000_000). // 500ms
-				Guard(func(c Context) bool { return c.Count > 0 }).
-				GuardLabel("hasCount").
-				Assign(func(c Context) Context { c.Count++; return c }).
-				ActionLabel("increment").
-				GoTo("done")
+						Guard(func(c Context) bool { return c.Count > 0 }).
+						GuardLabel("hasCount").
+						Assign(func(c Context) Context { c.Count++; return c }).
+						ActionLabel("increment").
+						GoTo("done")
 		}).
 		State("done", func(s *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
@@ -1301,7 +1290,7 @@ func TestSCXMLDelayedTransitionWithGuardAndAction(t *testing.T) {
 	if delayTr.Cond != "hasCount" {
 		t.Errorf("expected cond 'hasCount', got '%s'", delayTr.Cond)
 	}
-	if delayTr.Assign == nil || len(delayTr.Assign) == 0 {
+	if len(delayTr.Assign) == 0 {
 		t.Fatal("expected assign element")
 	}
 	if delayTr.Assign[0].Location != "increment" {
@@ -1465,7 +1454,7 @@ func TestSCXMLAssignEmptyLocationOmitted(t *testing.T) {
 
 	idle := nodeByID(doc.Children, "idle")
 	tr := idle.Transitions[0]
-	if tr.Assign == nil || len(tr.Assign) == 0 {
+	if len(tr.Assign) == 0 {
 		t.Fatal("expected assign element")
 	}
 
@@ -1551,4 +1540,3 @@ func TestSCXMLNoSpuriousAttributes(t *testing.T) {
 		t.Errorf("expected at most 1 xmlns declaration, got %d", occurrences)
 	}
 }
-

@@ -17,7 +17,7 @@ func TestActorAfter(t *testing.T) {
 		Build()
 
 	actor := Start(m, Context{})
-	
+
 	if actor.State() != "idle" {
 		t.Errorf("Expected state idle, got %s", actor.State())
 	}

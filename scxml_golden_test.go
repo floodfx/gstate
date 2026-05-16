@@ -35,7 +35,9 @@ func TestSCXMLGoldenExamples(t *testing.T) {
 			got := toSCXMLStringAny(tc.m)
 
 			if update {
-				os.MkdirAll(goldenDir, 0755)
+				if err := os.MkdirAll(goldenDir, 0755); err != nil {
+					t.Fatalf("mkdir golden: %v", err)
+				}
 				if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
 					t.Fatalf("write golden: %v", err)
 				}
@@ -58,7 +60,6 @@ func TestSCXMLGoldenExamples(t *testing.T) {
 func toSCXMLStringAny(m any) string {
 	type state = string
 	type event = string
-	type ctx = any // for most...
 	switch v := m.(type) {
 	case *Machine[state, event, struct{ Count int }]:
 		s, _ := ToSCXMLString(v)

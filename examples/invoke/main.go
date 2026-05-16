@@ -31,7 +31,7 @@ func main() {
 					return ctx.Err() // No transition occurs
 				}
 			}, "success", "error")
-			
+
 			// Allow manual cancellation
 			s.On("CANCEL").GoTo("idle")
 		}).
@@ -56,10 +56,10 @@ func main() {
 	// Interrupt the service by sending an event to change states.
 	actor2 := gstate.Start(machine, nil)
 	time.Sleep(20 * time.Millisecond)
-	
+
 	fmt.Println("Action: Sending CANCEL event...")
 	actor2.Send("CANCEL")
-	
+
 	// Wait a bit to see the cancellation log.
 	time.Sleep(50 * time.Millisecond)
 	fmt.Printf("Final State: %s\n", actor2.State())

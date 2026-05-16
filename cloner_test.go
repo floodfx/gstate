@@ -44,7 +44,7 @@ func TestClonerSupport(t *testing.T) {
 	}
 
 	snapshot := actor.Snapshot()
-	
+
 	// Mutate actor context
 	actor.Send("INC")
 	deadline = time.Now().Add(1 * time.Second)
@@ -59,7 +59,7 @@ func TestClonerSupport(t *testing.T) {
 	if len(snapshot.Context.Data) != 2 {
 		t.Errorf("Expected snapshot data length 2, got %d", len(snapshot.Context.Data))
 	}
-	
+
 	// Ensure deep copy of slice worked
 	if actor.Context().Data[1] != 1 {
 		t.Errorf("Expected actor data[1] to be 1")
