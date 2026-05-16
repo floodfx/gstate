@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0](https://github.com/floodfx/gstate/compare/v0.1.0...v0.2.0) (2026-05-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* Actor.SendCtx now returns error. Source-compatible for callers that ignored the previous void return; callers that assigned a name with the old signature will need to add a variable.
+
+### Features
+
+* add SignalObserver and ObserverFuncs observer adapters ([#28](https://github.com/floodfx/gstate/issues/28)) ([041c3f8](https://github.com/floodfx/gstate/commit/041c3f8eda0039ab25ffd9e4ac18cb5fe30fdbf9))
+* auto-stop actor when machine reaches a "done" top-level state ([e7f12cb](https://github.com/floodfx/gstate/commit/e7f12cb12e57d47b4d7f8dbb49831cb46dd1ea85))
+* SendCtx returns error and honors ctx during enqueue ([726e421](https://github.com/floodfx/gstate/commit/726e421a70943c90c93b50265b6b24eb1121cf62))
+
+
+### Bug Fixes
+
+* drain invoke goroutines and stop accepting sends in Actor.Stop ([804fa4c](https://github.com/floodfx/gstate/commit/804fa4c4b688a4c34b68d6292678c94b2e448eba))
+
 ## 0.1.0 (2026-05-14)
 
 
