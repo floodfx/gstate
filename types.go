@@ -16,7 +16,14 @@ const (
 	Compound
 	// Parallel represents a state where all of its child regions are active simultaneously.
 	Parallel
-	// Final represents a state that indicates the completion of its parent's process.
+	// Final represents a state that indicates the completion of its parent's
+	// process. When the actor's top-level active state has reached "done"
+	// (an atomic Final, a compound whose active child is done, or a parallel
+	// whose every region is done), the actor stops itself automatically.
+	// See [Actor.Stop] for the shutdown contract.
+	//
+	// Machines that contain no Final state never auto-stop; their actors run
+	// until [Actor.Stop] is called explicitly.
 	Final
 )
 
