@@ -468,7 +468,23 @@ All read methods are thread-safe (protected by `RWMutex`).
 actor.Stop()
 ```
 
-`Stop()` cancels all running invocations, stops all timers, and closes the mailbox. It is safe to call multiple times.
+`Stop()` cancels all running invocations and timers, then waits for in-flight work to drain before returning. It is safe to call multiple times — only the first call performs the shutdown.
+
+**Guaranteed finished before `Stop` returns:**
+
+- Entry, exit, and transition actions, and guard evaluations, for any event the actor had already begun processing. These run synchronously and complete before `Stop` proceeds.
+- `Invoke` `Src` goroutines. Their `context.Context` is cancelled, and `Stop` waits for each `Src` function to return.
+- `OnInvokeCompleted` observer callbacks for in-flight or cancelled invokes. Same for `OnStateExited` / `OnStateEntered` from the in-flight transition.
+
+**Not awaited by `Stop`:**
+
+- Events buffered in the mailbox that the actor had not yet pulled. They are abandoned: once you call `Stop`, the actor stops accepting further events.
+- Goroutines you spawned yourself from inside an action, guard, or invoke (e.g. `go publishMetric(c)` inside an `Assign`). The actor has no handle on them. If the work must finish before `Stop` returns, model it as an `Invoke` instead — `Stop` awaits invoke goroutines.
+- `time.AfterFunc` callbacks for delayed transitions that were already firing when `Stop` ran. They safely no-op (the actor's state check rejects them), but `Stop` does not block for them.
+
+**Send after Stop is a no-op.** `Send` and `SendCtx` called after `Stop` (or concurrently with `Stop` past the point of shutdown signalling) return without delivering the event and without panicking.
+
+**Tip — guaranteeing cleanup work runs:** if you need work to complete before shutdown (flush a buffer, commit a transaction), model it as an `Invoke`. Your `Src` function should observe `ctx.Done()`, do its cleanup, and return. `Stop` will wait for it.
 
 ---
 

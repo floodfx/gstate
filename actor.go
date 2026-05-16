@@ -36,6 +36,15 @@ type Actor[S ~string, E ~string, C any] struct {
 	mailbox     chan envelope[E]
 	mu          sync.RWMutex
 	stopOnce    sync.Once
+	// stopped is closed exactly once by Stop to signal shutdown to the loop
+	// goroutine and to any caller parked in [Actor.SendCtx]'s select. Using a
+	// dedicated channel (rather than closing the mailbox) avoids the
+	// send-on-closed-channel panic when multiple senders race with Stop.
+	stopped chan struct{}
+	// wg tracks the loop goroutine and every invoke goroutine spawned by
+	// [Actor.restartServices]. Stop waits on wg before returning so callers
+	// can rely on a clean shutdown without leaked goroutines.
+	wg sync.WaitGroup
 
 	id       ActorID
 	observer Observer[S, E, C]
@@ -132,6 +141,7 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 		invocations: make(map[S]context.CancelFunc),
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
+		stopped:     make(chan struct{}),
 		id:          cfg.actorID,
 		observer:    cfg.observer,
 	}
@@ -142,6 +152,7 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 	// Handle any transient transitions that fire immediately
 	a.handleAlways(context.Background())
 
+	a.wg.Add(1)
 	go a.loop()
 	return a
 }
@@ -190,6 +201,7 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 		invocations: make(map[S]context.CancelFunc),
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
+		stopped:     make(chan struct{}),
 		id:          id,
 		observer:    cfg.observer,
 	}
@@ -199,37 +211,75 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 		a.restartServices(context.Background(), sID)
 	}
 
+	a.wg.Add(1)
 	go a.loop()
 	return a
 }
 
-// Stop stops the actor, cancels all running services/timers, and closes the mailbox.
+// Stop shuts the actor down and waits for all goroutines it owns to exit
+// before returning. It is safe to call from multiple goroutines and safe to
+// call more than once — only the first call performs the shutdown work.
+//
+// Stop completion contract:
+//
+// Guaranteed finished before Stop returns:
+//
+//   - Entry, exit, and transition actions, and guard evaluations, for any
+//     event the actor had already begun processing. These run synchronously
+//     under the actor's write lock; Stop acquires that lock before signalling
+//     shutdown, so the in-flight transition completes first.
+//   - [InvokeDef] Src goroutines. Stop cancels their [context.Context] and
+//     waits for each Src function to return.
+//   - [Observer.OnInvokeCompleted] callbacks for each in-flight or cancelled
+//     invoke. They fire from inside the invoke goroutine immediately before
+//     the WaitGroup decrement.
+//   - [Observer.OnStateExited] and [Observer.OnStateEntered] callbacks
+//     fired during the in-flight transition.
+//
+// Not awaited by Stop:
+//
+//   - Events buffered in the mailbox that the actor had not yet pulled.
+//     They are abandoned: once Stop has signalled shutdown, the loop exits
+//     without consuming further events. Use the invoke pattern below if
+//     you have work that must run before shutdown.
+//   - Goroutines spawned by user code from inside an action, guard, or
+//     invoke (for example `go publishMetric(c)` inside an Assign action).
+//     The actor has no handle on them. If the work must finish before Stop
+//     returns, model it as an [InvokeDef] Src instead — Stop awaits invoke
+//     goroutines.
+//   - [time.AfterFunc] callbacks for delayed transitions that were already
+//     firing when Stop ran. They safely no-op via the inactive-state check
+//     in executeInternalTransition but Stop does not block for them.
+//
+// Send after Stop is a no-op. [Actor.Send] and [Actor.SendCtx] called after
+// Stop (or concurrently with Stop past the shutdown-signal point) return
+// without delivering the event and without panicking.
 func (a *Actor[S, E, C]) Stop() {
 	a.stopOnce.Do(func() {
 		a.mu.Lock()
-		defer a.mu.Unlock()
-
 		// Cancel all invocations
-		if a.invocations != nil {
-			for _, cancel := range a.invocations {
-				cancel()
-			}
-			a.invocations = make(map[S]context.CancelFunc)
+		for _, cancel := range a.invocations {
+			cancel()
 		}
+		a.invocations = make(map[S]context.CancelFunc)
 
 		// Stop all timers
-		if a.timers != nil {
-			for _, timers := range a.timers {
-				for _, t := range timers {
-					t.Stop()
-				}
+		for _, timers := range a.timers {
+			for _, t := range timers {
+				t.Stop()
 			}
-			a.timers = make(map[S][]*time.Timer)
 		}
+		a.timers = make(map[S][]*time.Timer)
+		a.mu.Unlock()
 
-		if a.mailbox != nil {
-			close(a.mailbox)
-		}
+		// Signal shutdown. Senders parked in SendCtx's select wake on the
+		// stopped channel and return without delivering. The loop goroutine
+		// observes stopped at its next iteration and exits.
+		close(a.stopped)
+
+		// Wait for the loop goroutine and every invoke goroutine to return
+		// before declaring shutdown complete.
+		a.wg.Wait()
 	})
 }
 
@@ -274,7 +324,9 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 			State:     id,
 			Timestamp: start,
 		})
+		a.wg.Add(1)
 		go func(sID S, invoke *InvokeDef[S, E, C], c C) {
+			defer a.wg.Done()
 			err := invoke.Src(invokeCtx, c)
 			completedAt := time.Now()
 			// Report completion regardless of cancellation so observers can
@@ -406,9 +458,10 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 	return res
 }
 
-// Send enqueues an event in the actor's mailbox using [context.Background] as
-// the request-scoped context. It is a non-blocking thin wrapper over
-// [Actor.SendCtx].
+// Send enqueues an event in the actor's mailbox using [context.Background]
+// as the request-scoped context. It is a thin wrapper over [Actor.SendCtx].
+// Sending to a stopped actor is a no-op (the call returns without delivering
+// the event and without panicking).
 func (a *Actor[S, E, C]) Send(event E) {
 	a.SendCtx(context.Background(), event)
 }
@@ -416,22 +469,42 @@ func (a *Actor[S, E, C]) Send(event E) {
 // SendCtx enqueues an event in the actor's mailbox carrying the supplied
 // request-scoped context. The context is delivered to every [Observer]
 // callback fired in response to this event, including Always transitions
-// chained after it. Sending to a stopped actor is a no-op.
+// chained after it.
+//
+// After [Actor.Stop] has signalled shutdown — or while Stop is in progress
+// past that point — SendCtx is a no-op: the event is not delivered and the
+// call returns immediately. There is no error return; callers that need to
+// react to a stopped actor should track shutdown state themselves.
 func (a *Actor[S, E, C]) SendCtx(ctx context.Context, event E) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	defer func() {
-		// Recover if sending to a closed mailbox after Stop.
-		_ = recover()
-	}()
-	a.mailbox <- envelope[E]{ctx: ctx, event: event}
+	select {
+	case a.mailbox <- envelope[E]{ctx: ctx, event: event}:
+	case <-a.stopped:
+	}
 }
 
-// loop is the main event loop running in a background goroutine.
+// loop is the main event loop running in a background goroutine. It exits
+// when [Actor.Stop] closes a.stopped. The priority pre-check makes the exit
+// deterministic: once stopped is closed, the next iteration returns without
+// pulling any further buffered events from the mailbox.
 func (a *Actor[S, E, C]) loop() {
-	for env := range a.mailbox {
-		a.handleEvent(env.ctx, env.event)
+	defer a.wg.Done()
+	for {
+		// Priority: bail out if Stop has signalled shutdown, even if events
+		// remain buffered. Stop's contract is "abandon, don't drain."
+		select {
+		case <-a.stopped:
+			return
+		default:
+		}
+		select {
+		case env := <-a.mailbox:
+			a.handleEvent(env.ctx, env.event)
+		case <-a.stopped:
+			return
+		}
 	}
 }
 
