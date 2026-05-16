@@ -6,30 +6,29 @@ import (
 )
 
 // TestSignalObserverFiresOnEachCallback asserts that every lifecycle
-// callback calls the supplied signal function. With a guarded
-// transition fired by Send("GO"), the post-Send sequence is exactly
-// six callbacks: EventReceived, GuardEvaluated, StateExited,
-// ActionExecuted, StateEntered, Transition (see
-// TestLifecycleHooksHappyPathOrder). Start itself fires one
-// StateEntered for the initial state. Total: 7.
+// callback calls the supplied signal function. A RecordingObserver in
+// the same MultiObserver supplies the ground-truth event count so this
+// test does not pin a specific callback inventory — that is the job of
+// the lifecycle hook tests (TestLifecycleHooksHappyPathOrder etc.).
 func TestSignalObserverFiresOnEachCallback(t *testing.T) {
 	var count atomic.Int64
 	sig := SignalObserver[StateID, EventID, Context](func() {
 		count.Add(1)
 	})
+	rec := &RecordingObserver[StateID, EventID, Context]{}
 	bar := newKindBarrier(KindTransition, 1)
 
 	m := guardedMachine(true)
 	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{sig, bar},
+		MultiObserver[StateID, EventID, Context]{sig, rec, bar},
 	))
 	defer a.Stop()
 
 	a.Send("GO")
 	<-bar.done
 
-	if got := count.Load(); got != 7 {
-		t.Fatalf("signal fired %d times, want 7 (1 initial StateEntered + 6 post-Send)", got)
+	if got, want := count.Load(), int64(len(rec.Events())); got != want {
+		t.Fatalf("signal fired %d times, recorder saw %d events", got, want)
 	}
 }
 
@@ -69,29 +68,4 @@ func TestSignalObserverWakesChannelDeterministically(t *testing.T) {
 
 	// Start itself fires OnStateEntered, so ready is already pending.
 	<-ready
-}
-
-// TestSignalObserverComposesWithMultiObserver confirms SignalObserver
-// works inside MultiObserver alongside a RecordingObserver: the signal
-// count matches the recorder's event count.
-func TestSignalObserverComposesWithMultiObserver(t *testing.T) {
-	var count atomic.Int64
-	sig := SignalObserver[StateID, EventID, Context](func() {
-		count.Add(1)
-	})
-	rec := &RecordingObserver[StateID, EventID, Context]{}
-	bar := newKindBarrier(KindTransition, 1)
-
-	m := guardedMachine(true)
-	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{sig, rec, bar},
-	))
-	defer a.Stop()
-
-	a.Send("GO")
-	<-bar.done
-
-	if got, want := count.Load(), int64(len(rec.Events())); got != want {
-		t.Fatalf("signal count %d != recorder event count %d", got, want)
-	}
 }
