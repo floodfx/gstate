@@ -161,6 +161,11 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 
 	a.wg.Add(1)
 	go a.loop()
+
+	// If the Initial chain landed on a top-level "done" state, auto-stop
+	// immediately. This handles machines whose Initial points directly
+	// to a Final, or whose Always chain terminates in one.
+	a.maybeAutoStop()
 	return a
 }
 
@@ -220,7 +225,79 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 
 	a.wg.Add(1)
 	go a.loop()
+
+	// If the hydrated snapshot is already in a "done" state, auto-stop.
+	a.maybeAutoStop()
 	return a
+}
+
+// isStateDoneLocked returns true if the subtree rooted at sID has reached
+// its completion state per SCXML semantics. Must be called with a.mu held
+// (read or write).
+//
+//   - Final: trivially done.
+//   - Atomic (non-Final): never done.
+//   - Compound: done iff its currently-active child is done.
+//   - Parallel: done iff every region is done.
+func (a *Actor[S, E, C]) isStateDoneLocked(sID S) bool {
+	sd := a.machine.States[sID]
+	if sd == nil {
+		return false
+	}
+	switch sd.Type {
+	case Final:
+		return true
+	case Atomic:
+		return false
+	case Compound:
+		// Exactly one child of a compound state is active.
+		for childID := range sd.States {
+			if a.active[childID] {
+				return a.isStateDoneLocked(childID)
+			}
+		}
+		return false
+	case Parallel:
+		if len(sd.States) == 0 {
+			return false
+		}
+		for childID := range sd.States {
+			if !a.isStateDoneLocked(childID) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// maybeAutoStop spawns Stop on a fresh goroutine if the machine's top-level
+// active state has reached completion (see isStateDoneLocked).
+//
+// Stop must run on a separate goroutine: when maybeAutoStop is triggered
+// from the loop goroutine (after handleEvent returns), a synchronous Stop
+// would deadlock — Stop both re-acquires a.mu and waits on a.wg for the
+// loop goroutine to exit, which is the goroutine that called Stop.
+//
+// Must be called WITHOUT holding a.mu; it acquires RLock briefly to read
+// the active set.
+func (a *Actor[S, E, C]) maybeAutoStop() {
+	a.mu.RLock()
+	var topLevel S
+	var found bool
+	for sID := range a.active {
+		sd := a.machine.States[sID]
+		if sd != nil && sd.parent == "" {
+			topLevel = sID
+			found = true
+			break
+		}
+	}
+	done := found && a.isStateDoneLocked(topLevel)
+	a.mu.RUnlock()
+	if done {
+		go a.Stop()
+	}
 }
 
 // Stop shuts the actor down and waits for all goroutines it owns to exit
@@ -535,6 +612,9 @@ func (a *Actor[S, E, C]) loop() {
 		select {
 		case env := <-a.mailbox:
 			a.handleEvent(env.ctx, env.event)
+			// After the lock released, check whether the transition
+			// landed us in a "done" top-level state and auto-stop if so.
+			a.maybeAutoStop()
 		case <-a.stopped:
 			return
 		}

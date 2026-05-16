@@ -531,6 +531,20 @@ actor.Stop()
 
 **Tip — guaranteeing cleanup work runs:** if you need work to complete before shutdown (flush a buffer, commit a transaction), model it as an `Invoke`. Your `Src` function should observe `ctx.Done()`, do its cleanup, and return. `Stop` will wait for it.
 
+### Automatic stop on reaching a "done" state
+
+An actor whose machine transitions into a "done" top-level state stops itself automatically. The shutdown follows the same contract as calling `Stop()` explicitly (see above): in-flight invokes are cancelled and awaited, observers see the terminal transition before the actor goes away, and `Snapshot()` / `State()` / `States()` / `Context()` remain readable on the stopped actor.
+
+Auto-stop fires when the actor's top-level active state has reached "done" in the SCXML sense:
+
+- An atomic top-level state with `Type == Final`.
+- A compound top-level state whose active child chain reaches a Final (recursively).
+- A parallel top-level state whose every region has reached a Final (recursively).
+
+The check is purely a property of the active set — nothing is propagated up the hierarchy. (Compound-parent `onDone` transitions, where reaching a child Final fires an `onDone` event on the parent, are a separate feature not yet implemented.)
+
+**Machines without any `Final` state never auto-stop.** Their actors run until the caller invokes `Stop()` explicitly. Auto-stop is opt-in by virtue of placing a `Final` state in your machine, not opt-out via configuration.
+
 ---
 
 ## Persistence: Snapshot and Hydrate
