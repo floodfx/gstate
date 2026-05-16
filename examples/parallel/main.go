@@ -48,7 +48,7 @@ func main() {
 
 	fmt.Println("--- Starting Parallel Actor ---")
 	actor := gstate.Start(machine, nil)
-	
+
 	// Notice that we are in multiple leaf states at once.
 	fmt.Printf("Active States: %v\n", actor.States())
 

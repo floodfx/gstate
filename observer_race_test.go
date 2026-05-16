@@ -56,7 +56,7 @@ func TestObserverConcurrentSendAndRead(t *testing.T) {
 		go func() {
 			defer senderWG.Done()
 			for j := 0; j < perSender; j++ {
-				a.SendCtx(context.Background(), "PING")
+				_ = a.SendCtx(context.Background(), "PING")
 			}
 		}()
 	}

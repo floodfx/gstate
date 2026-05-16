@@ -28,7 +28,7 @@ func TestSendCtxPropagatesContext(t *testing.T) {
 
 	type key struct{}
 	want := context.WithValue(context.Background(), key{}, "hello")
-	a.SendCtx(want, "GO")
+	_ = a.SendCtx(want, "GO")
 
 	select {
 	case got := <-rec.got:

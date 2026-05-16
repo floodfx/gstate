@@ -25,7 +25,7 @@ func TestActorHistory(t *testing.T) {
 		Build()
 
 	actor := Start(m, Context{})
-	
+
 	// Initial state is s1
 	if actor.State() != "s1" {
 		t.Errorf("Expected initial state s1, got %s", actor.State())

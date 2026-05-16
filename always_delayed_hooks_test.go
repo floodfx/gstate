@@ -105,7 +105,7 @@ func TestAlwaysChainedAfterEventReusesSendCtx(t *testing.T) {
 
 	type key struct{}
 	parent := context.WithValue(context.Background(), key{}, "trace-1")
-	a.SendCtx(parent, "GO")
+	_ = a.SendCtx(parent, "GO")
 
 	// We expect two transitions: a->mid (event GO) and mid->b (Always). Both
 	// should carry the parent ctx.

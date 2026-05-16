@@ -123,7 +123,7 @@ func TestInvokeHooksPropagateSendCtx(t *testing.T) {
 
 	type key struct{}
 	parent := context.WithValue(context.Background(), key{}, "trace-xyz")
-	a.SendCtx(parent, "GO")
+	_ = a.SendCtx(parent, "GO")
 
 	for _, ch := range []chan context.Context{cap.started, cap.completed} {
 		select {

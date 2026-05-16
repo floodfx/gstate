@@ -126,4 +126,3 @@ func (c *cloneSignalObserver) OnTransition(context.Context, TransitionEvent[cSta
 	default:
 	}
 }
-

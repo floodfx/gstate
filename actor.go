@@ -816,14 +816,6 @@ func (a *Actor[S, E, C]) enterChildrenWithHistory(ctx context.Context, id S, dee
 	}
 }
 
-// getPathToRoot returns the pre-computed slice of ancestor IDs for a state.
-func (a *Actor[S, E, C]) getPathToRoot(id S) []S {
-	if s, ok := a.machine.States[id]; ok {
-		return s.path
-	}
-	return []S{}
-}
-
 // isDescendant returns true if childID is a descendant of parentID.
 func (a *Actor[S, E, C]) isDescendant(childID, parentID S) bool {
 	if parentID == "" {

@@ -58,7 +58,7 @@ func TestSendAfterStopIsNoOp(t *testing.T) {
 
 	// Both should return without panicking.
 	a.Send("GO")
-	a.SendCtx(context.Background(), "GO")
+	_ = a.SendCtx(context.Background(), "GO")
 
 	if got := len(rec.EventsReceived()); got != 0 {
 		t.Fatalf("expected zero OnEventReceived after Stop, got %d", got)

@@ -37,7 +37,7 @@ func TestLifecycleHooksHappyPathOrder(t *testing.T) {
 	// EventReceived, GuardEvaluated(true), StateExited(a), ActionExecuted, StateEntered(b), Transition
 	all := rec.Events()
 	// Find the EventReceived for "GO" and assert the post-trigger sequence.
-	var idx int = -1
+	var idx = -1
 	for i, ev := range all {
 		if ev.Kind == KindEventReceived {
 			n := ev.Payload.(EventNotice[StateID, EventID, Context])

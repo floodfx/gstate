@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/floodfx/gstate"
@@ -47,7 +48,7 @@ func main() {
 	// - History map
 	// - MyContext data
 	snapshot := actor1.Snapshot()
-	
+
 	// Convert snapshot to JSON. This could be saved to a database.
 	data, _ := json.MarshalIndent(snapshot, "", "  ")
 	fmt.Printf("Serialized Snapshot:\n%s\n", string(data))
@@ -55,7 +56,9 @@ func main() {
 	fmt.Println("\n--- Step 2: Hydrate a New Actor from the Snapshot ---")
 	// Simulate loading the JSON back.
 	var loadedSnapshot gstate.Snapshot[MyState, MyContext]
-	json.Unmarshal(data, &loadedSnapshot)
+	if err := json.Unmarshal(data, &loadedSnapshot); err != nil {
+		log.Fatalf("unmarshal snapshot: %v", err)
+	}
 
 	// gstate.Hydrate creates a new Actor in exactly the same state.
 	actor2 := gstate.Hydrate(machine, loadedSnapshot)

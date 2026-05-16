@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: build / vet / test
+  ci:
+    name: build / lint / vuln / test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,14 +22,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build
-        run: go build ./...
+      - name: Set up just
+        uses: extractions/setup-just@v2
 
-      - name: Vet
-        run: go vet ./...
+      - name: Install dev tools
+        run: just install-tools
 
-      - name: Test
-        run: go test -count=1 ./...
-
-      - name: Race
-        run: go test -race -count=1 ./...
+      - name: Run CI
+        run: just ci
