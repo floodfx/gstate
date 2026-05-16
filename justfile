@@ -42,5 +42,9 @@ test:
 test-race:
     go test -race -count=1 ./...
 
+# Run benchmarks with memory stats.
+bench:
+    go test -bench=. -benchmem -count=3 -benchtime=1s -run='^$' ./...
+
 # Everything CI runs end-to-end, in order.
 ci: build lint vuln test test-race
