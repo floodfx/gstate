@@ -688,6 +688,7 @@ Each example has its own README with a Mermaid state diagram, a walkthrough of w
 | [invoke](./examples/invoke) | Async services, auto-cancellation | API calls, file uploads |
 | [delayed](./examples/delayed) | Time-based transitions | Session timeouts, debouncing |
 | [agent](./examples/agent) | Guards, always, invoke, retries | CI/CD pipelines, automated remediation |
+| [observer](./examples/observer) | Observer, MultiObserver, RecordingObserver | Structured logging, metrics, test assertions |
 | [persistence](./examples/persistence) | Snapshot & hydrate | Durable workflows, serverless |
 
 ---
