@@ -472,15 +472,20 @@ actor.Stop()
 
 **Guaranteed finished before `Stop` returns:**
 
-- Entry, exit, and transition actions, and guard evaluations, for any event the actor had already begun processing. These run synchronously and complete before `Stop` proceeds.
-- `Invoke` `Src` goroutines. Their `context.Context` is cancelled, and `Stop` waits for each `Src` function to return.
-- `OnInvokeCompleted` observer callbacks for in-flight or cancelled invokes. Same for `OnStateExited` / `OnStateEntered` from the in-flight transition.
+| Work item | Why it's guaranteed |
+|---|---|
+| Entry, exit, and transition actions, and guard evaluations, for any event the actor had already begun processing | Synchronous on the loop goroutine. `Stop` acquires the actor's write lock before signalling shutdown; `handleEvent` holds that lock while running actions, so `Stop` waits for the in-flight transition to fully complete before proceeding. |
+| `Invoke` `Src` goroutines | Cancelled via their `context.CancelFunc`. A `sync.WaitGroup` tracks every spawned invoke goroutine and `Stop` waits on it before returning. |
+| `OnInvokeCompleted` observer callbacks for each in-flight or cancelled invoke | Fired from inside the invoke goroutine immediately before its `defer wg.Done()`, so they're covered by the wait. |
+| `OnStateExited` / `OnStateEntered` callbacks fired during the in-flight transition | Run synchronously inside `handleEvent` under the write lock — same guarantee as actions. |
 
 **Not awaited by `Stop`:**
 
-- Events buffered in the mailbox that the actor had not yet pulled. They are abandoned: once you call `Stop`, the actor stops accepting further events.
-- Goroutines you spawned yourself from inside an action, guard, or invoke (e.g. `go publishMetric(c)` inside an `Assign`). The actor has no handle on them. If the work must finish before `Stop` returns, model it as an `Invoke` instead — `Stop` awaits invoke goroutines.
-- `time.AfterFunc` callbacks for delayed transitions that were already firing when `Stop` ran. They safely no-op (the actor's state check rejects them), but `Stop` does not block for them.
+| Work item | Why, and what to do instead |
+|---|---|
+| Events buffered in the mailbox that the actor had not yet pulled | Abandoned. Once `Stop` has signalled shutdown, the loop exits without consuming further events. Model must-run-before-shutdown work as an `Invoke` (see Tip below). |
+| Goroutines you spawned yourself from inside an action, guard, or invoke (e.g. `go publishMetric(c)` inside an `Assign`) | The actor has no handle on them. If the work must finish before `Stop` returns, do it inside an `Invoke` `Src` whose return is awaited, not in a fire-and-forget goroutine. |
+| `time.AfterFunc` callbacks for delayed transitions that were already firing when `Stop` ran | They no-op via the actor's inactive-state check in `executeInternalTransition`, but they run on Go's internal timer pool and aren't tracked. The side effect is harmless. |
 
 **Send after Stop is a no-op.** `Send` and `SendCtx` called after `Stop` (or concurrently with `Stop` past the point of shutdown signalling) return without delivering the event and without panicking.
 
