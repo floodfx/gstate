@@ -57,5 +57,20 @@ bench-ci:
 bench-trend:
     go test -bench=. -benchmem -count=3 -benchtime=1s -run='^$' ./... | tee bench.txt
 
+# Tier 1 smoke fuzz: run each fuzz target briefly to catch panics
+# introduced by recent code. Corpus regression for known crashes
+# already happens automatically when `just test` replays the files
+# in testdata/fuzz/. Cost: ~30s total (10s per target).
+fuzz-smoke:
+    go test -run='^$' -fuzz=FuzzHydrate -fuzztime=10s -parallel=1 .
+    go test -run='^$' -fuzz=FuzzBuilder -fuzztime=10s -parallel=1 .
+    go test -run='^$' -fuzz=FuzzEventSequence -fuzztime=10s -parallel=1 .
+
+# Tier 2 deep fuzz: run a single target for an extended window. The
+# scheduled fuzz workflow invokes this once per target via a matrix
+# (TARGET is one of FuzzHydrate, FuzzBuilder, FuzzEventSequence, etc).
+fuzz-deep TARGET:
+    go test -run='^$' -fuzz={{TARGET}} -fuzztime=10m -parallel=1 .
+
 # Everything CI runs end-to-end, in order.
-ci: build lint vuln test test-race bench-ci
+ci: build lint vuln test test-race bench-ci fuzz-smoke
