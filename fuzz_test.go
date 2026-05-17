@@ -69,6 +69,12 @@ func FuzzHydrate(f *testing.F) {
 	f.Add([]byte(`{"active":["nonexistent_state"]}`))
 	f.Add([]byte(`{"active":["working"],"history":{"working":"loading"}}`))
 	f.Add([]byte(`{"active":["working","loading","idle"]}`))
+	// Regression: nil History (no history field) + transition that
+	// exits a state with non-empty parent → panics if Hydrate didn't
+	// coalesce nil to an empty map. Triggers via Hydrate(active=loading)
+	// then SendCtx("DONE") which exits loading (parent=working) and
+	// writes history["working"]="loading".
+	f.Add([]byte(`{"active":["loading"]}`))
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`null`))
 
