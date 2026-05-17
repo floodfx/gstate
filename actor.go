@@ -205,6 +205,15 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 		active[sID] = true
 	}
 
+	// Snapshots produced by Actor.Snapshot always have a non-nil
+	// History map, but JSON unmarshal can produce nil when the field
+	// is missing (e.g. `{"active":[...]}`). Coalesce so subsequent
+	// writes in executeTransition don't panic.
+	history := snapshot.History
+	if history == nil {
+		history = make(map[S]S)
+	}
+
 	id := cfg.actorID
 	if id == "" {
 		id = snapshot.ActorID
@@ -214,7 +223,7 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 		machine:     m,
 		context:     snapshot.Context,
 		active:      active,
-		history:     snapshot.History,
+		history:     history,
 		invocations: make(map[S]context.CancelFunc),
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
