@@ -1,0 +1,53 @@
+name: Fuzz (deep)
+
+# Tier 2 of the fuzz CI plan (issue #8): scheduled deep fuzzing on
+# main. Each fuzz target runs in its own matrix job for 10 minutes.
+# On failure, the crashing seed file the fuzzer wrote under
+# testdata/fuzz/<target>/ is uploaded as an artifact so it can be
+# downloaded and committed to the corpus.
+#
+# Tier 1 (smoke fuzz on every PR + automatic corpus regression via
+# `just test`) runs in the main Go workflow, not here.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Monday 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: fuzz / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzHydrate
+          - FuzzBuilder
+          - FuzzEventSequence
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up just
+        uses: extractions/setup-just@v4
+
+      - name: Run deep fuzz
+        run: just fuzz-deep ${{ matrix.target }}
+
+      - name: Upload crashing seeds
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}-${{ github.run_id }}
+          path: testdata/fuzz/${{ matrix.target }}/
+          retention-days: 90
