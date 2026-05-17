@@ -11,7 +11,10 @@ name: Fuzz (deep)
 
 on:
   schedule:
-    - cron: '0 9 * * 1' # Monday 09:00 UTC
+    # Saturday 07:00 UTC = 00:00 MST (winter) / 01:00 MDT (summer).
+    # Stays inside Saturday year-round; cron has no timezone field
+    # so we pick a fixed UTC offset and accept the 1h DST drift.
+    - cron: '0 7 * * 6'
   workflow_dispatch:
 
 permissions:
