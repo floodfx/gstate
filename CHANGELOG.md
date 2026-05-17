@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.1](https://github.com/floodfx/gstate/compare/v0.2.0...v0.2.1) (2026-05-17)
+
+
+### Features
+
+* add fuzz targets for Hydrate, builder, and event sequence ([89741c3](https://github.com/floodfx/gstate/commit/89741c30bdd0758a637331f5d7e532b298adcec3))
+* add performance benchmarks for engine hot path ([#4](https://github.com/floodfx/gstate/issues/4)) ([31d7c3c](https://github.com/floodfx/gstate/commit/31d7c3ccd6e487ac54f5497e09ecb099c45e2906))
+
+
+### Bug Fixes
+
+* coalesce nil Snapshot.History to empty map in Hydrate ([3aaa982](https://github.com/floodfx/gstate/commit/3aaa982f4af55dda16b121bbd9acdfdbeb397859))
+* remove ineffectual assignment flagged by golangci-lint ([899ea73](https://github.com/floodfx/gstate/commit/899ea7314857d291cb8f1cba49a76301f48b8c4f))
+
+
+### Performance Improvements
+
+* cache getSortedActiveStatesLocked to eliminate per-call allocation ([b8bd2c5](https://github.com/floodfx/gstate/commit/b8bd2c5049d26ca0de0cdd70eea19ea34a482b21))
+
 ## [0.2.0](https://github.com/floodfx/gstate/compare/v0.1.0...v0.2.0) (2026-05-16)
 
 
