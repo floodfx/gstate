@@ -42,9 +42,20 @@ test:
 test-race:
     go test -race -count=1 ./...
 
-# Run benchmarks with memory stats.
+# Run benchmarks with memory stats. Use locally for real measurements.
 bench:
     go test -bench=. -benchmem -count=3 -benchtime=1s -run='^$' ./...
 
+# Compile-gate benchmarks: run each benchmark exactly once so CI catches
+# benchmark code rotting without paying for real timing. Cost: ~2s.
+bench-ci:
+    go test -run='^$' -bench=. -benchtime=1x ./...
+
+# Trend benchmarks: same args as `bench`, but writes output to bench.txt
+# so CI's Tier 2 workflow can upload it as an artifact for offline
+# benchstat comparison.
+bench-trend:
+    go test -bench=. -benchmem -count=3 -benchtime=1s -run='^$' ./... | tee bench.txt
+
 # Everything CI runs end-to-end, in order.
-ci: build lint vuln test test-race
+ci: build lint vuln test test-race bench-ci

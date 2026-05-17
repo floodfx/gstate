@@ -1,0 +1,44 @@
+name: Bench (trend)
+
+# Tier 2 of the benchmark CI plan (issue #7): run the full benchmark
+# suite on every push to main, upload the raw output as an artifact for
+# offline benchstat comparison. Advisory only — does not gate merges.
+#
+# GitHub-hosted runners have too much variance to use absolute numbers
+# as a gate; instead we save the timeseries and let humans diff with
+# `benchstat` when investigating a suspected regression.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: bench (trend)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up just
+        uses: extractions/setup-just@v4
+
+      - name: Run benchmarks
+        run: just bench-trend
+
+      - name: Upload bench output
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ github.sha }}
+          path: bench.txt
+          retention-days: 90
