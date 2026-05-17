@@ -476,16 +476,10 @@ func benchAlwaysChain(b *testing.B, m *Machine[benchState, benchEvent, benchCtx]
 		rounds             = 20
 	)
 
-	totalTransitions := rounds * 2 // GO triggers the always chain (counted as 1 transition to terminal), RESET is 1
-	// Actually, always transitions also fire OnTransition. Each GO triggers
-	// steps always-transitions + the initial GO transition? Let's count:
-	// GO: start->s0 (1 transition), then s0->s1 (always), s1->s2 (always), ..., s(n-1)->terminal (always) = steps transitions
-	// So GO produces steps+1 transitions? No — the GO event transition is start->s0, then the always chain runs.
-	// Let's check: the GO transition goes to s0. Then handleAlways fires s0->s1, s1->s2, ..., s(n-1)->terminal.
-	// That's steps always-transitions. Plus the initial event-driven transition = steps + 1.
-	// RESET: terminal->start = 1 transition.
-	// Per round: steps + 1 + 1 = steps + 2.
-	totalTransitions = rounds * (steps + 2)
+	// GO: start->s0 (1 transition), then always chain s0->s1->...->terminal (steps transitions).
+	// RESET: terminal->start (1 transition).
+	// Per round: steps + 2.
+	totalTransitions := rounds * (steps + 2)
 
 	var mu sync.Mutex
 	count := 0
