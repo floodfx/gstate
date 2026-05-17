@@ -55,6 +55,11 @@ type Actor[S ~string, E ~string, C any] struct {
 
 	id       ActorID
 	observer Observer[S, E, C]
+
+	// sortedActive caches the result of getSortedActiveStatesLocked.
+	// Nil means stale; rebuilt lazily on next call. Invalidated by
+	// enterSingleState and exitState.
+	sortedActive []S
 }
 
 // envelope carries an event together with the request-scoped context that
@@ -517,12 +522,16 @@ func (a *Actor[S, E, C]) State() S {
 // getSortedActiveStatesLocked retrieves active states sorted by depth (deepest first).
 // Must be called with at least a read lock.
 func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
+	if a.sortedActive != nil {
+		return a.sortedActive
+	}
+
 	res := make([]S, 0, len(a.active))
 	for sID := range a.active {
 		res = append(res, sID)
 	}
 
-	// Sort by depth descending (leaves first) using pre-computed depth
+	// Sort by depth descending (leaves first) using pre-computed depth.
 	for i := 0; i < len(res); i++ {
 		for j := i + 1; j < len(res); j++ {
 			dI := 0
@@ -539,6 +548,7 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 			}
 		}
 	}
+	a.sortedActive = res
 	return res
 }
 
@@ -771,6 +781,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 			}
 		}
 		delete(a.active, sID)
+		a.sortedActive = nil // invalidate cache
 		a.observer.OnStateExited(ctx, StateEvent[S, E, C]{
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
@@ -834,6 +845,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 // notifies the observer.
 func (a *Actor[S, E, C]) enterSingleState(ctx context.Context, id S) {
 	a.active[id] = true
+	a.sortedActive = nil // invalidate cache
 	stateDef := a.machine.States[id]
 	if stateDef == nil {
 		return
