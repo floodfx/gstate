@@ -32,13 +32,16 @@ func TestMermaidParsesWithMermaidCli(t *testing.T) {
 		t.Skip("no golden .mmd files; run with UPDATE_GOLDEN=1 first")
 	}
 
+	puppeteerCfg := filepath.Join("testdata", "puppeteer-config.json")
 	out := t.TempDir()
 	for _, f := range files {
 		t.Run(filepath.Base(f), func(t *testing.T) {
 			svg := filepath.Join(out, filepath.Base(f)+".svg")
 			cmd := exec.Command("npx", "-y",
 				"@mermaid-js/mermaid-cli@"+mermaidCliVersion,
-				"--quiet", "-i", f, "-o", svg)
+				"--quiet",
+				"-p", puppeteerCfg,
+				"-i", f, "-o", svg)
 			stderr, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Errorf("mmdc rejected %s: %v\n%s", filepath.Base(f), err, string(stderr))

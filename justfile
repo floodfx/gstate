@@ -88,6 +88,7 @@ mermaid-verify:
         echo "rendering $name"; \
         npx -y @mermaid-js/mermaid-cli@{{mermaid-cli-version}} \
             --quiet \
+            -p testdata/puppeteer-config.json \
             -i $mmd \
             -o testdata/golden/mermaid/svg/$name.svg; \
     done
