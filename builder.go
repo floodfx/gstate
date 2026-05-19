@@ -112,9 +112,21 @@ func (s *StateBuilder[S, E, C]) Entry(fn func(C) C) {
 	s.state.Entry = append(s.state.Entry, fn)
 }
 
+// EntryLabel sets a human-readable label for the state's Entry actions.
+// Used in Mermaid output to identify what runs on entry.
+func (s *StateBuilder[S, E, C]) EntryLabel(name string) {
+	s.state.entryLabel = name
+}
+
 // Exit adds a function to be executed when this state is left.
 func (s *StateBuilder[S, E, C]) Exit(fn func(C) C) {
 	s.state.Exit = append(s.state.Exit, fn)
+}
+
+// ExitLabel sets a human-readable label for the state's Exit actions.
+// Used in Mermaid output to identify what runs on exit.
+func (s *StateBuilder[S, E, C]) ExitLabel(name string) {
+	s.state.exitLabel = name
 }
 
 // Invoke configures an asynchronous service to run during the state's lifecycle.
@@ -125,6 +137,15 @@ func (s *StateBuilder[S, E, C]) Invoke(fn func(context.Context, C) error, onDone
 		Src:     fn,
 		OnDone:  onDone,
 		OnError: onError,
+	}
+}
+
+// InvokeLabel sets a human-readable label for the state's invoked service.
+// Used in Mermaid output (e.g. as the diamond pseudo-state label).
+// No-op if Invoke has not been called yet.
+func (s *StateBuilder[S, E, C]) InvokeLabel(name string) {
+	if s.state.Invoke != nil {
+		s.state.Invoke.label = name
 	}
 }
 

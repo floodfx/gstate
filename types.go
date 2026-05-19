@@ -86,6 +86,10 @@ type StateDef[S ~string, E ~string, C any] struct {
 	path []S
 	// eventOrder tracks declaration order of transition event keys.
 	eventOrder []E
+	// entryLabel is a human-readable label for Entry actions, used in Mermaid output.
+	entryLabel string
+	// exitLabel is a human-readable label for Exit actions, used in Mermaid output.
+	exitLabel string
 }
 
 // TransitionDef defines the rules for moving from one state to another.
@@ -114,6 +118,9 @@ type InvokeDef[S ~string, E ~string, C any] struct {
 	OnDone S
 	// OnError is the target state when Src returns a non-nil error.
 	OnError S
+
+	// label is a human-readable label for this invocation, used in Mermaid output.
+	label string
 }
 
 // Cloner is an optional interface that Context types can implement to provide

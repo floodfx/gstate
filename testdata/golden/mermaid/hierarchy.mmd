@@ -1,0 +1,17 @@
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 16px
+---
+flowchart TB
+    __start(("●"))
+    __start --> parent
+    done((("done")))
+    subgraph parent ["parent"]
+        child1(["child1"])
+        child2(["child2"])
+    end
+    parent -->|"EXIT_ALL"| done
+    child1 -->|"TO_CHILD2"| child2
+    child2 -->|"TO_CHILD1"| child1

@@ -1,0 +1,18 @@
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 16px
+---
+flowchart TB
+    classDef invokeService fill:#eef,stroke:#88c,stroke-width:1px
+    classDef invokeError stroke:#c33,color:#c33
+    __start(("●"))
+    __start --> loading
+    failure((("failure")))
+    loading(["loading"])
+    success((("success")))
+    loading_invoke{"loading_invoke"}:::invokeService
+    loading --> loading_invoke
+    loading_invoke -->|"invoke.done"| success
+    loading_invoke -->|"invoke.error"| failure

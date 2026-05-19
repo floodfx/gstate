@@ -1,0 +1,18 @@
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 16px
+---
+flowchart TB
+    __start(("●"))
+    __start --> parent
+    other(["other"])
+    subgraph parent ["parent"]
+        parent_hist(("[H]"))
+        s1(["s1"])
+        s2(["s2"])
+    end
+    other -->|"BACK"| parent
+    parent -->|"GO_AWAY"| other
+    s1 -->|"TO_S2"| s2

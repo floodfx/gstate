@@ -3,6 +3,7 @@ package gstate
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- 1. Basic flat machine ---
@@ -20,10 +21,10 @@ func TestMermaidBasicFlat(t *testing.T) {
 
 	got := ToMermaid(m)
 
-	assertContains(t, got, "stateDiagram-v2")
-	assertContains(t, got, "[*] --> off")
-	assertContains(t, got, "off --> on: FLIP")
-	assertContains(t, got, "on --> off: FLIP")
+	assertContains(t, got, "flowchart TB")
+	assertContains(t, got, "__start --> off")
+	assertContains(t, got, `off -->|"FLIP"| on`)
+	assertContains(t, got, `on -->|"FLIP"| off`)
 }
 
 // --- 2. Hierarchical (compound) states ---
@@ -46,12 +47,12 @@ func TestMermaidHierarchy(t *testing.T) {
 
 	got := ToMermaid(m)
 
-	assertContains(t, got, "[*] --> parent")
-	assertContains(t, got, "state parent {")
-	assertContains(t, got, "[*] --> child1")
-	assertContains(t, got, "child1 --> child2: NEXT")
-	assertContains(t, got, "parent --> done: EXIT")
-	assertContains(t, got, "done --> [*]")
+	assertContains(t, got, "__start --> parent")
+	assertContains(t, got, `subgraph parent ["parent"]`)
+	assertContains(t, got, `child1 -->|"NEXT"| child2`)
+	assertContains(t, got, `parent -->|"EXIT"| done`)
+	// Final state rendered as double-circle.
+	assertContains(t, got, `done((("done")))`)
 }
 
 // --- 3. Final states ---
@@ -68,7 +69,7 @@ func TestMermaidFinal(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "finished --> [*]")
+	assertContains(t, got, `finished((("finished")))`)
 }
 
 // --- 4. Parallel states ---
@@ -93,11 +94,11 @@ func TestMermaidParallel(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "state active {")
-	assertContains(t, got, "--") // parallel separator
-	assertContains(t, got, "state region1 {")
-	assertContains(t, got, "state region2 {")
-	assertContains(t, got, "r1a --> r1b: NEXT")
+	assertContains(t, got, `subgraph active ["active"]`)
+	assertContains(t, got, "direction LR")
+	assertContains(t, got, `subgraph region1 ["region1"]`)
+	assertContains(t, got, `subgraph region2 ["region2"]`)
+	assertContains(t, got, `r1a -->|"NEXT"| r1b`)
 }
 
 // --- 5. Guards ---
@@ -112,7 +113,7 @@ func TestMermaidGuards(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "idle --> active: GO [isReady]")
+	assertContains(t, got, `idle -->|"GO [isReady]"| active`)
 }
 
 func TestMermaidGuardNoLabel(t *testing.T) {
@@ -125,7 +126,7 @@ func TestMermaidGuardNoLabel(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "idle --> active: GO [guard]")
+	assertContains(t, got, `idle -->|"GO [guard]"| active`)
 }
 
 // --- 6. Always (eventless) transitions ---
@@ -140,7 +141,20 @@ func TestMermaidAlways(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "a --> b: [check]")
+	assertContains(t, got, `a -->|"always [check]"| b`)
+}
+
+func TestMermaidAlwaysUnlabeled(t *testing.T) {
+	m := New[StateID, EventID, Context]("always_unlabeled").
+		Initial("a").
+		State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Always().GoTo("b")
+		}).
+		State("b", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+	got := ToMermaid(m)
+	// Unlabeled Always still shows "always" so readers see the transition is automatic.
+	assertContains(t, got, `a -->|"always"| b`)
 }
 
 // --- 7. History ---
@@ -157,8 +171,8 @@ func TestMermaidHistory(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "state parent {")
-	// History should appear as a note or a [H] state inside parent
+	assertContains(t, got, `subgraph parent ["parent"]`)
+	// History pseudo-state inside the parent subgraph.
 	assertContains(t, got, "[H]")
 }
 
@@ -182,13 +196,13 @@ func TestMermaidDelayed(t *testing.T) {
 	m := New[StateID, EventID, Context]("delayed").
 		Initial("idle").
 		State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.After(0).GoTo("timeout")
+			s.After(100 * time.Millisecond).GoTo("timeout")
 		}).
 		State("timeout", func(s *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "idle --> timeout: after 0ms")
+	assertContains(t, got, `idle -->|"after 100ms"| timeout`)
 }
 
 // --- 9. Invoke ---
@@ -204,8 +218,10 @@ func TestMermaidInvoke(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, "loading --> success: done.invoke")
-	assertContains(t, got, "loading --> failure: error")
+	// Both paths set → diamond pseudo-state with friendly labels.
+	assertContains(t, got, "loading_invoke{")
+	assertContains(t, got, "invoke.done")
+	assertContains(t, got, "invoke.error")
 }
 
 // --- 10. Transition order preserved ---
@@ -335,7 +351,7 @@ func TestMermaidMultipleOptions(t *testing.T) {
 	got := ToMermaid(m, MermaidTheme(MermaidThemeForest), MermaidTitle("My Machine"))
 	assertContains(t, got, "theme: forest")
 	assertContains(t, got, "title: My Machine")
-	assertContains(t, got, "stateDiagram-v2")
+	assertContains(t, got, "flowchart")
 }
 
 // --- 17. Default config preserved ---
@@ -378,6 +394,154 @@ func TestMermaidNoteNoRawNewline(t *testing.T) {
 	if strings.Contains(got, "entry / action\nexit / action") {
 		t.Error("note should use <br/> not raw newline between entry and exit")
 	}
+}
+
+// --- Issue #37: entry/exit labels ---
+
+func TestMermaidEntryLabel(t *testing.T) {
+	m := New[StateID, EventID, Context]("entry_label").
+		Initial("s").
+		State("s", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Entry(func(c Context) Context { return c })
+			s.EntryLabel("startEngine")
+		}).
+		Build()
+	got := ToMermaid(m)
+	assertContains(t, got, "entry / startEngine")
+}
+
+func TestMermaidExitLabel(t *testing.T) {
+	m := New[StateID, EventID, Context]("exit_label").
+		Initial("s").
+		State("s", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Exit(func(c Context) Context { return c })
+			s.ExitLabel("stopEngine")
+		}).
+		Build()
+	got := ToMermaid(m)
+	assertContains(t, got, "exit / stopEngine")
+}
+
+func TestMermaidEntryAndExitLabels(t *testing.T) {
+	m := New[StateID, EventID, Context]("entry_exit_labels").
+		Initial("s").
+		State("s", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Entry(func(c Context) Context { return c })
+			s.Exit(func(c Context) Context { return c })
+			s.EntryLabel("startEngine")
+			s.ExitLabel("stopEngine")
+		}).
+		Build()
+	got := ToMermaid(m)
+	assertContains(t, got, "entry / startEngine")
+	assertContains(t, got, "exit / stopEngine")
+	// Both should live inside the same node label, separated by <br/>.
+	assertContains(t, got, "entry / startEngine<br/>exit / stopEngine")
+}
+
+func TestMermaidEntryExitLabelFallback(t *testing.T) {
+	m := New[StateID, EventID, Context]("fallback").
+		Initial("s").
+		State("s", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Entry(func(c Context) Context { return c })
+			s.Exit(func(c Context) Context { return c })
+		}).
+		Build()
+	got := ToMermaid(m)
+	assertContains(t, got, "entry / action")
+	assertContains(t, got, "exit / action")
+}
+
+// --- Issue #37: invoke rendering with diamond choice node ---
+
+func TestMermaidInvokeChoiceDiamond(t *testing.T) {
+	m := New[StateID, EventID, Context]("invoke_diamond").
+		Initial("loading").
+		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(nil, "success", "failure")
+		}).
+		State("success", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		State("failure", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+	got := ToMermaid(m)
+	// Diamond pseudo-state with synthesized id.
+	assertContains(t, got, "loading_invoke{")
+	// Three transitions: entry to diamond, then done and error outcomes.
+	assertContains(t, got, "loading --> loading_invoke")
+	assertContains(t, got, "loading_invoke -->")
+	assertContains(t, got, "invoke.done")
+	assertContains(t, got, "invoke.error")
+	// Targets: success and failure.
+	assertContains(t, got, "success")
+	assertContains(t, got, "failure")
+}
+
+func TestMermaidInvokeLabel(t *testing.T) {
+	m := New[StateID, EventID, Context]("invoke_labeled").
+		Initial("calling_llm").
+		State("calling_llm", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(nil, "checking_response", "failed")
+			s.InvokeLabel("call_llm")
+		}).
+		State("checking_response", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		State("failed", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+	got := ToMermaid(m)
+	// Diamond id = label.
+	assertContains(t, got, "call_llm{")
+	assertContains(t, got, "calling_llm --> call_llm")
+	assertContains(t, got, "call_llm -->")
+	assertContains(t, got, "invoke.done")
+	assertContains(t, got, "invoke.error")
+}
+
+func TestMermaidInvokeOnlyDone(t *testing.T) {
+	m := New[StateID, EventID, Context]("only_done").
+		Initial("loading").
+		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(nil, "success", "")
+		}).
+		State("success", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+	got := ToMermaid(m)
+	// No diamond — direct edge from loading to success.
+	if strings.Contains(got, "loading_invoke{") {
+		t.Errorf("expected no diamond for OnDone-only invoke, got:\n%s", got)
+	}
+	assertContains(t, got, "invoke.done")
+	assertContains(t, got, "loading")
+	assertContains(t, got, "success")
+}
+
+func TestMermaidInvokeOnlyError(t *testing.T) {
+	m := New[StateID, EventID, Context]("only_error").
+		Initial("loading").
+		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(nil, "", "failure")
+		}).
+		State("failure", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+	got := ToMermaid(m)
+	if strings.Contains(got, "loading_invoke{") {
+		t.Errorf("expected no diamond for OnError-only invoke, got:\n%s", got)
+	}
+	assertContains(t, got, "invoke.error")
+	assertContains(t, got, "failure")
+}
+
+func TestMermaidInvokeServiceClass(t *testing.T) {
+	m := New[StateID, EventID, Context]("invoke_class").
+		Initial("loading").
+		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(nil, "ok", "ko")
+		}).
+		State("ok", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		State("ko", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+	got := ToMermaid(m)
+	// Diamond should carry the invokeService class.
+	assertContains(t, got, "classDef invokeService")
+	assertContains(t, got, ":::invokeService")
 }
 
 // --- helpers ---

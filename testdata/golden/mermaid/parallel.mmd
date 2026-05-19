@@ -1,0 +1,24 @@
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 16px
+---
+flowchart TB
+    __start(("●"))
+    __start --> active
+    subgraph active ["active"]
+        direction LR
+        subgraph keyboard ["keyboard"]
+            caps_off(["caps_off"])
+            caps_on(["caps_on"])
+        end
+        subgraph mouse ["mouse"]
+            clicked(["clicked"])
+            not_clicked(["not_clicked"])
+        end
+    end
+    caps_off -->|"CAPS_LOCK"| caps_on
+    caps_on -->|"CAPS_LOCK"| caps_off
+    clicked -->|"RELEASE"| not_clicked
+    not_clicked -->|"CLICK"| clicked
