@@ -972,6 +972,11 @@ func (a *Actor[S, E, C]) handleAlwaysInternal(ctx context.Context) {
 
 		for _, sID := range sortedActive {
 			stateDef := a.machine.States[sID]
+			if stateDef == nil {
+				// Hydrate accepts arbitrary Active state IDs; ignore any
+				// that don't correspond to a state in this machine.
+				continue
+			}
 			for _, t := range stateDef.Always {
 				if t.Guard != nil {
 					ok := t.Guard(a.context)
