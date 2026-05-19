@@ -132,6 +132,13 @@ s.State(StateActive, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 - **`Entry`** runs when the state is entered, before any child states are resolved.
 - **`Exit`** runs when the state is left, as part of the transition.
 
+Optional `EntryLabel(name)` / `ExitLabel(name)` attach a human-readable name to the actions. The name doesn't change runtime behavior; it shows up inside the state's node in Mermaid output (see [§Mermaid Diagrams](#mermaid-diagrams)) so a reader of the generated diagram can tell *what* runs on entry/exit without reading the builder code.
+
+```go
+s.Entry(loadUserPrefs)
+s.EntryLabel("loadUserPrefs")
+```
+
 ---
 
 ## 5. Hierarchical (Nested) States
@@ -245,6 +252,13 @@ s.Invoke(func(ctx context.Context, c MyCtx) error {
     // This goroutine is managed by the Actor
     return doExpensiveWork(ctx)
 }, "onSuccessState", "onErrorState")
+```
+
+Optional `InvokeLabel(name)` names the invocation for Mermaid output. When both success and error targets are set, the labeled invoke renders as a diamond pseudo-state with `invoke.done` and `invoke.error` outgoing arrows — see [§Mermaid Diagrams](#mermaid-diagrams).
+
+```go
+s.Invoke(callLLM, "checking_response", "failed")
+s.InvokeLabel("call_llm")
 ```
 
 ### Delayed Transitions (`After`)
@@ -598,7 +612,7 @@ actor := gstate.Hydrate(machine, loaded,
 
 ### Mermaid Diagrams
 
-[`ToMermaid`](https://pkg.go.dev/github.com/floodfx/gstate#ToMermaid) converts a machine to a [Mermaid stateDiagram-v2](https://mermaid.js.org/syntax/stateDiagram.html) string. The output renders natively on GitHub, GitLab, and any Mermaid-compatible viewer.
+[`ToMermaid`](https://pkg.go.dev/github.com/floodfx/gstate#ToMermaid) converts a machine to a [Mermaid flowchart](https://mermaid.js.org/syntax/flowchart.html) string. The output renders natively on GitHub, GitLab, and any Mermaid-compatible viewer.
 
 ```go
 fmt.Println(gstate.ToMermaid(machine))
@@ -607,7 +621,6 @@ fmt.Println(gstate.ToMermaid(machine))
 Optional configuration via functional options:
 
 ```go
-// Custom theme and title
 gstate.ToMermaid(machine,
     gstate.MermaidTheme(gstate.MermaidThemeDark),
     gstate.MermaidTitle("My Workflow"),
@@ -624,6 +637,35 @@ Embed directly in a README with a fenced code block:
 <output of ToMermaid(machine)>
 ```
 ````
+
+**Diagram-friendly labels.** `EntryLabel` / `ExitLabel` / `InvokeLabel` make the rendered diagram self-explanatory. Entry/exit names appear inside the state node; an invoke with both success and error targets becomes a diamond pseudo-state with `invoke.done` and `invoke.error` arrows:
+
+```mermaid
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 16px
+---
+flowchart TB
+    classDef invokeService fill:#eef,stroke:#88c,stroke-width:1px
+    classDef invokeError stroke:#c33,color:#c33
+    __start(("●"))
+    __start --> idle
+    calling_llm(["calling_llm"])
+    checking_response(["checking_response"])
+    done((("done")))
+    failed((("failed")))
+    idle(["idle<br/>entry / startEngine<br/>exit / stopEngine"])
+    call_llm{"call_llm"}:::invokeService
+    calling_llm --> call_llm
+    call_llm -->|"invoke.done"| checking_response
+    call_llm -->|"invoke.error"| failed
+    checking_response -->|"OK"| done
+    idle -->|"BEGIN"| calling_llm
+```
+
+Labels are Mermaid-only — SCXML export keeps the spec-prescribed `done.invoke.<id>` / `error.platform` event names.
 
 ### SCXML Export
 

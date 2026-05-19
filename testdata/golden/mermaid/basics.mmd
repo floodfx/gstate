@@ -1,0 +1,13 @@
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 16px
+---
+flowchart TB
+    __start(("●"))
+    __start --> idle
+    active(["active"])
+    idle(["idle"])
+    active -->|"STOP"| idle
+    idle -->|"START"| active

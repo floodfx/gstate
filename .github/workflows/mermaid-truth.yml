@@ -1,0 +1,51 @@
+name: Mermaid truth
+
+# Runs the truth-tier verification: real mermaid-js parses + renders each
+# golden .mmd through @mermaid-js/mermaid-cli and compares the SVG snapshot
+# against the checked-in copy. Gated out of the main `Go` workflow so
+# contributors without Node still pass `just ci`. Drift here means our
+# emitted Mermaid no longer renders the way we last blessed it.
+
+on:
+  pull_request:
+    paths:
+      - 'mermaid.go'
+      - 'internal/mermaid/**'
+      - 'mermaid_*_test.go'
+      - 'testdata/golden/mermaid/**'
+      - '.github/workflows/mermaid-truth.yml'
+      - 'justfile'
+  push:
+    branches: [main]
+    paths:
+      - 'mermaid.go'
+      - 'internal/mermaid/**'
+      - 'mermaid_*_test.go'
+      - 'testdata/golden/mermaid/**'
+      - '.github/workflows/mermaid-truth.yml'
+      - 'justfile'
+
+permissions:
+  contents: read
+
+jobs:
+  truth:
+    name: render + snapshot via mermaid-cli
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run truth-tier tests
+        run: go test -tags=mermaid_truth -count=1 -run 'TestMermaid(ParsesWithMermaidCli|SvgsExist)' .

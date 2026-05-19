@@ -4,259 +4,246 @@ import (
 	"fmt"
 	"sort"
 
-	md "github.com/TyphonHill/go-mermaid/diagrams/state"
-	"github.com/TyphonHill/go-mermaid/diagrams/utils/basediagram"
+	mm "github.com/floodfx/gstate/internal/mermaid"
 )
 
 // MermaidThemeName identifies a Mermaid color theme.
-type MermaidThemeName = basediagram.ThemeName
+type MermaidThemeName string
 
 // Mermaid theme constants matching the five built-in Mermaid themes.
 const (
-	MermaidThemeDefault MermaidThemeName = basediagram.ThemeDefault
-	MermaidThemeNeutral MermaidThemeName = basediagram.ThemeNeutral
-	MermaidThemeDark    MermaidThemeName = basediagram.ThemeDark
-	MermaidThemeForest  MermaidThemeName = basediagram.ThemeForest
-	MermaidThemeBase    MermaidThemeName = basediagram.ThemeBase
+	MermaidThemeDefault MermaidThemeName = "default"
+	MermaidThemeNeutral MermaidThemeName = "neutral"
+	MermaidThemeDark    MermaidThemeName = "dark"
+	MermaidThemeForest  MermaidThemeName = "forest"
+	MermaidThemeBase    MermaidThemeName = "base"
 )
 
 // mermaidConfig holds optional configuration for Mermaid diagram rendering.
 type mermaidConfig struct {
 	theme    *MermaidThemeName
 	title    string
-	fontSize int // 0 means use go-mermaid default (16)
+	fontSize int // 0 means use Mermaid default (16)
 }
 
 // MermaidOption configures Mermaid diagram output.
 type MermaidOption func(*mermaidConfig)
 
-// MermaidTheme sets the Mermaid color theme (default, neutral, dark, forest, base).
+// MermaidTheme sets the Mermaid color theme.
 func MermaidTheme(theme MermaidThemeName) MermaidOption {
-	return func(c *mermaidConfig) {
-		c.theme = &theme
-	}
+	return func(c *mermaidConfig) { c.theme = &theme }
 }
 
 // MermaidTitle sets the diagram title shown in the frontmatter.
 func MermaidTitle(title string) MermaidOption {
-	return func(c *mermaidConfig) {
-		c.title = title
-	}
+	return func(c *mermaidConfig) { c.title = title }
 }
 
 // MermaidFontSize sets the base font size in pixels (default 16).
 func MermaidFontSize(size int) MermaidOption {
-	return func(c *mermaidConfig) {
-		c.fontSize = size
-	}
+	return func(c *mermaidConfig) { c.fontSize = size }
 }
 
-// ToMermaid converts a Machine to a Mermaid stateDiagram-v2 string.
-// Options configure the frontmatter (theme, title, fontSize).
+// ToMermaid converts a Machine to a Mermaid flowchart source string.
+// The output is plain Mermaid syntax; downstream consumers (GitHub README,
+// mermaid.live, mermaid-cli, IDE plugins) handle the actual rendering.
 func ToMermaid[S ~string, E ~string, C any](m *Machine[S, E, C], opts ...MermaidOption) string {
 	var cfg mermaidConfig
 	for _, o := range opts {
 		o(&cfg)
 	}
 
-	d := md.NewDiagram()
-
-	// Apply options to the diagram's config.
-	if cfg.theme != nil {
-		d.Config.SetTheme(*cfg.theme)
-	}
+	f := mm.New(mm.DirTB)
 	if cfg.title != "" {
-		d.SetTitle(cfg.title)
+		f.Title(cfg.title)
+	}
+	if cfg.theme != nil {
+		f.Theme(string(*cfg.theme))
+	} else {
+		f.Theme(string(MermaidThemeDefault))
 	}
 	if cfg.fontSize > 0 {
-		d.Config.SetFontSize(cfg.fontSize)
+		f.FontSize(cfg.fontSize)
+	} else {
+		f.FontSize(16)
 	}
-
-	stateMap := map[string]*md.State{}
 
 	topLevel := sortedTopLevel(m)
-
-	// Build states
-	for _, s := range topLevel {
-		buildState(d, nil, s, m, stateMap)
+	hasAnyInvoke := false
+	hasInvokeError := false
+	walkStates(topLevel, func(s *StateDef[S, E, C]) {
+		if s.Invoke != nil {
+			hasAnyInvoke = true
+			if s.Invoke.OnError != "" {
+				hasInvokeError = true
+			}
+		}
+	})
+	if hasAnyInvoke {
+		f.ClassDef("invokeService", "fill:#eef,stroke:#88c,stroke-width:1px")
+	}
+	if hasInvokeError {
+		f.ClassDef("invokeError", "stroke:#c33,color:#c33")
 	}
 
-	// Initial transition
+	// Initial pseudo-state + transition into the machine's initial state.
+	// The label "●" (U+25CF) gives the synthetic start node the standard
+	// UML filled-circle visual.
 	if m.Initial != "" {
-		if target, ok := stateMap[mermaidID(string(m.Initial))]; ok {
-			d.AddTransition(nil, target, "")
-		}
+		f.Node("__start", "●", mm.ShapeCircle)
+		f.Edge("__start", mermaidID(string(m.Initial)), "", mm.EdgeSolid)
 	}
 
-	// Build transitions in deterministic order
-	forEachState(topLevel, func(s *StateDef[S, E, C]) {
-		addTransitions(d, s, stateMap)
-	})
-
-	return d.String()
-}
-
-func sortedTopLevel[S ~string, E ~string, C any](m *Machine[S, E, C]) []*StateDef[S, E, C] {
-	var result []*StateDef[S, E, C]
-	for _, s := range m.States {
-		if s.parent == "" {
-			result = append(result, s)
-		}
+	// Declare states (nodes/subgraphs) in their proper scope.
+	for _, s := range topLevel {
+		declareState(f, nil, s, m)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return string(result[i].ID) < string(result[j].ID)
+
+	// Emit all transitions at the top level, in deterministic order.
+	walkStates(topLevel, func(s *StateDef[S, E, C]) {
+		emitTransitions(f, s)
 	})
-	return result
+
+	return f.String()
 }
 
-func buildState[S ~string, E ~string, C any](
-	d *md.Diagram,
-	parentMD *md.State,
+func declareState[S ~string, E ~string, C any](
+	root *mm.Flowchart,
+	parent *mm.Subgraph,
 	def *StateDef[S, E, C],
 	m *Machine[S, E, C],
-	stateMap map[string]*md.State,
 ) {
 	id := mermaidID(string(def.ID))
+	hasChildren := len(def.States) > 0
 
-	// Final states: add as end-state transition
-	if def.Type == Final {
-		s := addOrNestState(d, parentMD, id, string(def.ID), md.StateNormal)
-		stateMap[id] = s
-		// Add end transition
-		d.AddTransition(s, nil, "")
+	// Final atomic state: render as double-circle in the parent scope.
+	if def.Type == Final && !hasChildren {
+		newNode(root, parent, id, string(def.ID), mm.ShapeDoubleCircle)
 		return
 	}
 
-	hasChildren := len(def.States) > 0
-
-	var s *md.State
 	if hasChildren || def.Type == Parallel {
-		// Composite state
-		s = addOrNestState(d, parentMD, id, "", md.StateComposite)
-
-		// Initial child
-		if def.Initial != "" {
-			initState := s.AddNestedState(mermaidID(string(def.Initial)), "", md.StateStart)
-			_ = initState
+		// Compound or parallel: emit as subgraph; recurse for children.
+		sg := newSubgraph(root, parent, id, string(def.ID))
+		if def.Type == Parallel {
+			sg.Direction(mm.DirLR)
 		}
-
-		// History note
 		if def.History == Shallow || def.History == Deep {
 			label := "[H]"
 			if def.History == Deep {
 				label = "[H*]"
 			}
-			s.AddNote(label, md.NoteRight)
+			sg.Node(id+"_hist", label, mm.ShapeCircle)
 		}
-
-		// Children
-		children := sortedChildren(def)
-		if def.Type == Parallel {
-			// Fork/Join pattern for parallel
-			forkID := id + "_fork"
-			joinID := id + "_join"
-			fork := s.AddNestedState(forkID, "", md.StateFork)
-			join := s.AddNestedState(joinID, "", md.StateJoin)
-			stateMap[forkID] = fork
-			stateMap[joinID] = join
-
-			for _, child := range children {
-				buildState(d, s, child, m, stateMap)
-				childID := mermaidID(string(child.ID))
-				if childState, ok := stateMap[childID]; ok {
-					d.AddTransition(fork, childState, "")
-					d.AddTransition(childState, join, "")
-				}
-			}
-		} else {
-			for _, child := range children {
-				buildState(d, s, child, m, stateMap)
-			}
+		for _, child := range sortedChildren(def) {
+			declareState(root, sg, child, m)
 		}
-	} else {
-		// Leaf state
-		s = addOrNestState(d, parentMD, id, string(def.ID), md.StateNormal)
-	}
-
-	stateMap[id] = s
-
-	// Entry/exit notes
-	if len(def.Entry) > 0 && len(def.Exit) > 0 {
-		s.AddNote("entry / action<br/>exit / action", md.NoteLeft)
-	} else if len(def.Entry) > 0 {
-		s.AddNote("entry / action", md.NoteLeft)
-	} else if len(def.Exit) > 0 {
-		s.AddNote("exit / action", md.NoteLeft)
-	}
-}
-
-func addOrNestState(d *md.Diagram, parent *md.State, id, description string, st md.StateType) *md.State {
-	if parent != nil {
-		return parent.AddNestedState(id, description, st)
-	}
-	return d.AddState(id, description, st)
-}
-
-func addTransitions[S ~string, E ~string, C any](
-	d *md.Diagram,
-	def *StateDef[S, E, C],
-	stateMap map[string]*md.State,
-) {
-	fromID := mermaidID(string(def.ID))
-	from, ok := stateMap[fromID]
-	if !ok {
 		return
 	}
 
-	// Event transitions (in declaration order)
+	// Atomic state: stadium-shaped node with entry/exit labels in the description.
+	label := buildStateLabel(def, string(def.ID))
+	newNode(root, parent, id, label, mm.ShapeStadium)
+}
+
+func newNode(root *mm.Flowchart, parent *mm.Subgraph, id, label string, shape mm.NodeShape) *mm.Node {
+	if parent != nil {
+		return parent.Node(id, label, shape)
+	}
+	return root.Node(id, label, shape)
+}
+
+func newSubgraph(root *mm.Flowchart, parent *mm.Subgraph, id, label string) *mm.Subgraph {
+	if parent != nil {
+		return parent.Subgraph(id, label)
+	}
+	return root.Subgraph(id, label)
+}
+
+// buildStateLabel produces the visible label for an atomic state, embedding
+// entry/exit annotations when the state has Entry/Exit actions.
+func buildStateLabel[S ~string, E ~string, C any](def *StateDef[S, E, C], defaultLabel string) string {
+	hasEntry := len(def.Entry) > 0
+	hasExit := len(def.Exit) > 0
+	if !hasEntry && !hasExit {
+		return defaultLabel
+	}
+	label := defaultLabel
+	if hasEntry {
+		ename := def.entryLabel
+		if ename == "" {
+			ename = "action"
+		}
+		label += "<br/>entry / " + ename
+	}
+	if hasExit {
+		xname := def.exitLabel
+		if xname == "" {
+			xname = "action"
+		}
+		label += "<br/>exit / " + xname
+	}
+	return label
+}
+
+func emitTransitions[S ~string, E ~string, C any](f *mm.Flowchart, def *StateDef[S, E, C]) {
+	from := mermaidID(string(def.ID))
+
+	// Event-driven transitions, in declaration order.
 	for _, event := range def.eventOrder {
 		for _, tr := range def.Transitions[event] {
-			targetID := mermaidID(string(tr.Target))
-			if to, ok := stateMap[targetID]; ok {
-				label := transitionLabel(string(event), tr)
-				d.AddTransition(from, to, label)
-			}
+			f.Edge(from, mermaidID(string(tr.Target)), transitionLabel(string(event), tr), mm.EdgeSolid)
 		}
 	}
 
-	// Always transitions
+	// Always transitions. Render with "always" where the event name would
+	// go so readers can see the transition is automatic/eventless, rather
+	// than an unlabeled arrow that looks like any other connection.
 	for _, tr := range def.Always {
-		targetID := mermaidID(string(tr.Target))
-		if to, ok := stateMap[targetID]; ok {
-			label := transitionLabel("", tr)
-			d.AddTransition(from, to, label)
-		}
+		f.Edge(from, mermaidID(string(tr.Target)), transitionLabel("always", tr), mm.EdgeSolid)
 	}
 
-	// Delayed transitions
+	// Delayed transitions.
 	for _, tr := range def.Delayed {
-		targetID := mermaidID(string(tr.Target))
-		if to, ok := stateMap[targetID]; ok {
-			label := fmt.Sprintf("after %s", formatDuration(tr.After))
-			if tr.Guard != nil {
-				gn := "guard"
-				if tr.guardName != "" {
-					gn = tr.guardName
-				}
-				label += fmt.Sprintf(" [%s]", gn)
+		label := fmt.Sprintf("after %s", formatDuration(tr.After))
+		if tr.Guard != nil {
+			gn := "guard"
+			if tr.guardName != "" {
+				gn = tr.guardName
 			}
-			d.AddTransition(from, to, label)
+			label += fmt.Sprintf(" [%s]", gn)
 		}
+		f.Edge(from, mermaidID(string(tr.Target)), label, mm.EdgeSolid)
 	}
 
-	// Invoke
+	// Invoke: diamond pseudo-state when both OnDone and OnError are set;
+	// direct edge with friendly label otherwise.
 	if def.Invoke != nil {
-		if def.Invoke.OnDone != "" {
-			targetID := mermaidID(string(def.Invoke.OnDone))
-			if to, ok := stateMap[targetID]; ok {
-				d.AddTransition(from, to, "done.invoke")
+		hasDone := def.Invoke.OnDone != ""
+		hasError := def.Invoke.OnError != ""
+		switch {
+		case hasDone && hasError:
+			diamondID := from + "_invoke"
+			diamondLabel := def.Invoke.label
+			if diamondLabel != "" {
+				diamondID = mermaidID(diamondLabel)
 			}
-		}
-		if def.Invoke.OnError != "" {
-			targetID := mermaidID(string(def.Invoke.OnError))
-			if to, ok := stateMap[targetID]; ok {
-				d.AddTransition(from, to, "error")
+			f.Node(diamondID, diamondLabel, mm.ShapeDiamond).Class("invokeService")
+			f.Edge(from, diamondID, "", mm.EdgeSolid)
+			f.Edge(diamondID, mermaidID(string(def.Invoke.OnDone)), "invoke.done", mm.EdgeSolid)
+			f.Edge(diamondID, mermaidID(string(def.Invoke.OnError)), "invoke.error", mm.EdgeSolid)
+		case hasDone:
+			label := "invoke.done"
+			if def.Invoke.label != "" {
+				label += " [" + def.Invoke.label + "]"
 			}
+			f.Edge(from, mermaidID(string(def.Invoke.OnDone)), label, mm.EdgeSolid)
+		case hasError:
+			label := "invoke.error"
+			if def.Invoke.label != "" {
+				label += " [" + def.Invoke.label + "]"
+			}
+			f.Edge(from, mermaidID(string(def.Invoke.OnError)), label, mm.EdgeSolid)
 		}
 	}
 }
@@ -276,16 +263,29 @@ func transitionLabel[S ~string, E ~string, C any](event string, tr *TransitionDe
 	return label
 }
 
-// forEachState walks states depth-first in sorted order.
-func forEachState[S ~string, E ~string, C any](states []*StateDef[S, E, C], fn func(*StateDef[S, E, C])) {
+func sortedTopLevel[S ~string, E ~string, C any](m *Machine[S, E, C]) []*StateDef[S, E, C] {
+	var result []*StateDef[S, E, C]
+	for _, s := range m.States {
+		if s.parent == "" {
+			result = append(result, s)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return string(result[i].ID) < string(result[j].ID)
+	})
+	return result
+}
+
+// walkStates walks states depth-first in sorted order.
+func walkStates[S ~string, E ~string, C any](states []*StateDef[S, E, C], fn func(*StateDef[S, E, C])) {
 	for _, s := range states {
 		fn(s)
-		forEachState(sortedChildren(s), fn)
+		walkStates(sortedChildren(s), fn)
 	}
 }
 
+// mermaidID sanitizes a state id into a Mermaid-compatible identifier.
 func mermaidID(id string) string {
-	// Replace chars that mermaid can't use in identifiers
 	result := make([]byte, 0, len(id))
 	for i := 0; i < len(id); i++ {
 		c := id[i]

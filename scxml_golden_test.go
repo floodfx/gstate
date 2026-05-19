@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // GoldenTest is a table-driven test that ensures our SCXML output
@@ -167,7 +168,7 @@ func delayedGoldenMachine() *Machine[string, string, any] {
 	return New[string, string, any]("delayed").
 		Initial("idle").
 		State("idle", func(s *StateBuilder[string, string, any]) {
-			s.After(0).GoTo("timeout")
+			s.After(100 * time.Millisecond).GoTo("timeout")
 		}).
 		State("timeout", func(s *StateBuilder[string, string, any]) {}).
 		Build()

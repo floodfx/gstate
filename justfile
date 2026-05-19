@@ -72,5 +72,26 @@ fuzz-smoke:
 fuzz-deep TARGET:
     go test -run='^$' -fuzz={{TARGET}} -fuzztime=10m -parallel=1 .
 
+# Truth-tier verification for Mermaid output: re-render every golden .mmd
+# through the real mermaid-js parser/renderer (via npx) and update the
+# checked-in SVGs. Requires Node on PATH. Pinned to a specific mermaid-cli
+# version so SVG output is reproducible — upgrades are explicit PRs that
+# regenerate the SVGs and surface the visual diff for human review.
+#
+# Run locally before opening a PR that changes Mermaid emission.
+mermaid-cli-version := "11.15.0"
+mermaid-verify:
+    UPDATE_GOLDEN=1 go test -count=1 -run TestMermaidGoldens .
+    @mkdir -p testdata/golden/mermaid/svg
+    @for mmd in testdata/golden/mermaid/*.mmd; do \
+        name=$(basename $mmd .mmd); \
+        echo "rendering $name"; \
+        npx -y @mermaid-js/mermaid-cli@{{mermaid-cli-version}} \
+            --quiet \
+            -i $mmd \
+            -o testdata/golden/mermaid/svg/$name.svg; \
+    done
+    @echo "done — review testdata/golden/mermaid/svg/ before commit"
+
 # Everything CI runs end-to-end, in order.
 ci: build lint vuln test test-race bench-ci fuzz-smoke
