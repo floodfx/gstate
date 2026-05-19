@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.2](https://github.com/floodfx/gstate/compare/v0.2.1...v0.2.2) (2026-05-19)
+
+
+### Features
+
+* **mermaid:** add entry/exit/invoke labels and switch to flowchart ([5decad0](https://github.com/floodfx/gstate/commit/5decad098998bcd5d83125a3ffa90fc718ac7913))
+
+
+### Bug Fixes
+
+* guard Always processing against nil stateDef from Hydrate ([d997bba](https://github.com/floodfx/gstate/commit/d997bba95b5fff2548cf0230f75390f60937df8d))
+
 ## [0.2.1](https://github.com/floodfx/gstate/compare/v0.2.0...v0.2.1) (2026-05-17)
 
 
