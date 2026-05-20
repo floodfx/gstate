@@ -41,12 +41,19 @@ const (
     EventToggle MyEvent = "TOGGLE"
 )
 
-machine := gstate.New[MyState, MyEvent, any]("toggle").
+// Define a simple context that implements the Cloner interface
+type MyContext struct{}
+
+func (c MyContext) Clone() MyContext {
+    return c
+}
+
+machine := gstate.New[MyState, MyEvent, MyContext]("toggle").
     Initial(StateOff).
-    State(StateOff, func(s *gstate.StateBuilder[MyState, MyEvent, any]) {
+    State(StateOff, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
         s.On(EventToggle).GoTo(StateOn)
     }).
-    State(StateOn, func(s *gstate.StateBuilder[MyState, MyEvent, any]) {
+    State(StateOn, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
         s.On(EventToggle).GoTo(StateOff)
     }).
     Build()
@@ -60,11 +67,11 @@ machine := gstate.New[MyState, MyEvent, any]("toggle").
 
 One of the core strengths of `gstate` is its use of Go 1.18+ generics to provide strict type safety.
 
-The library uses three generic parameters: `[S ~string, E ~string, C any]`.
+The library uses three generic parameters: `[S ~string, E ~string, C Cloner[C]]`.
 
 - **`S` (State ID)**: By using a custom string type (e.g., `type MyState string`), you ensure that `Initial()`, `State()`, and `GoTo()` only accept valid state identifiers.
 - **`E` (Event ID)**: Similarly, `On(event)` only accepts events of your specific type.
-- **`C` (Context)**: The data your machine holds is strictly typed. Actions and guards receive this exact type, eliminating the need for `interface{}` casting.
+- **`C` (Context)**: The data your machine holds is strictly typed, and MUST satisfy the `gstate.Cloner[C]` constraint. Actions and guards receive this exact type, eliminating the need for dynamic casting and guaranteeing thread-safe reads/writes during actor execution.
 
 **Benefits:**
 - **No Typos**: Compilers will catch `actor.Send("TYPO")` if your event type is strictly defined.
@@ -91,9 +98,19 @@ s.On("INCREMENT").
     })
 ```
 
-#### Safe Snapshots with `Cloner`
+#### Thread Safety via `Cloner` Constraint
 
-If your Context contains reference types (pointers, slices, maps), `Snapshot()` and `Context()` might suffer from race conditions or shared state. You can implement the `Cloner` interface to provide a deep copy:
+To guarantee thread-safe read/write isolation when snapshotting or observing a running Actor, the Context type `C` must satisfy the `Cloner[C]` constraint.
+
+If your Context consists solely of value types (like `struct{ Count int }`), implementing `Clone()` is as simple as returning `c`:
+
+```go
+func (c MyCtx) Clone() MyCtx {
+    return c
+}
+```
+
+If your Context contains reference types (pointers, slices, maps), you must perform a deep copy inside `Clone()` to ensure true isolation:
 
 ```go
 type MyCtx struct {
@@ -247,12 +264,21 @@ fmt.Printf("Active States: %v\n", actor.States())
 ### Invoked Services (`Invoke`)
 Used for asynchronous work (like an API call). The service starts when you enter the state and is **automatically cancelled** (via `context.Context`) if you leave the state before it finishes.
 
+To prevent data races between concurrent transitions and background goroutines, **mutations from inside an Invoke must go through the provided `mutate` callback**:
+
 ```go
-s.Invoke(func(ctx context.Context, c MyCtx) error {
-    // This goroutine is managed by the Actor
+s.Invoke(func(ctx context.Context, snap MyCtx, mutate func(func(MyCtx) MyCtx)) error {
+    // Use `snap` to read the state context at entry.
+    // Use the thread-safe `mutate` callback to safely update context.
+    mutate(func(c MyCtx) MyCtx {
+        c.Data = "updated"
+        return c
+    })
     return doExpensiveWork(ctx)
 }, "onSuccessState", "onErrorState")
 ```
+
+The `mutate` callback accepts a function that receives the current context and returns the updated context. This update runs under the actor's internal write lock, ensuring complete race-free synchronization. If the state is exited or the actor stops before the callback runs, the mutation is safely ignored (no-op'd) to prevent stale/obsolete writes.
 
 Optional `InvokeLabel(name)` names the invocation for Mermaid output. When both success and error targets are set, the labeled invoke renders as a diamond pseudo-state with `invoke.done` and `invoke.error` outgoing arrows — see [§Mermaid Diagrams](#mermaid-diagrams).
 
@@ -563,7 +589,7 @@ actor.Stop()
 | Work item | Why it's guaranteed |
 |---|---|
 | Entry, exit, and transition actions, and guard evaluations, for any event the actor had already begun processing | Synchronous on the loop goroutine. `Stop` acquires the actor's write lock before signalling shutdown; `handleEvent` holds that lock while running actions, so `Stop` waits for the in-flight transition to fully complete before proceeding. |
-| `Invoke` `Src` goroutines | Cancelled via their `context.CancelFunc`. A `sync.WaitGroup` tracks every spawned invoke goroutine and `Stop` waits on it before returning. |
+| `Invoke` `Func` goroutines | Cancelled via their `context.CancelFunc`. A `sync.WaitGroup` tracks every spawned invoke goroutine and `Stop` waits on it before returning. |
 | `OnInvokeCompleted` observer callbacks for each in-flight or cancelled invoke | Fired from inside the invoke goroutine immediately before its `defer wg.Done()`, so they're covered by the wait. |
 | `OnStateExited` / `OnStateEntered` callbacks fired during the in-flight transition | Run synchronously inside `handleEvent` under the write lock — same guarantee as actions. |
 
@@ -572,12 +598,12 @@ actor.Stop()
 | Work item | Why, and what to do instead |
 |---|---|
 | Events buffered in the mailbox that the actor had not yet pulled | Abandoned. Once `Stop` has signalled shutdown, the loop exits without consuming further events. Model must-run-before-shutdown work as an `Invoke` (see Tip below). |
-| Goroutines you spawned yourself from inside an action, guard, or invoke (e.g. `go publishMetric(c)` inside an `Assign`) | The actor has no handle on them. If the work must finish before `Stop` returns, do it inside an `Invoke` `Src` whose return is awaited, not in a fire-and-forget goroutine. |
+| Goroutines you spawned yourself from inside an action, guard, or invoke (e.g. `go publishMetric(c)` inside an `Assign`) | The actor has no handle on them. If the work must finish before `Stop` returns, do it inside an `Invoke` `Func` whose return is awaited, not in a fire-and-forget goroutine. |
 | `time.AfterFunc` callbacks for delayed transitions that were already firing when `Stop` ran | They no-op via the actor's inactive-state check in `executeInternalTransition`, but they run on Go's internal timer pool and aren't tracked. The side effect is harmless. |
 
 **Send after Stop is a no-op.** `Send` swallows any error and returns; `SendCtx` returns `gstate.ErrActorStopped` so callers can detect that the event was not delivered. Neither will panic.
 
-**Tip — guaranteeing cleanup work runs:** if you need work to complete before shutdown (flush a buffer, commit a transaction), model it as an `Invoke`. Your `Src` function should observe `ctx.Done()`, do its cleanup, and return. `Stop` will wait for it.
+**Tip — guaranteeing cleanup work runs:** if you need work to complete before shutdown (flush a buffer, commit a transaction), model it as an `Invoke`. Your `Func` function should observe `ctx.Done()`, do its cleanup, and return. `Stop` will wait for it.
 
 ### Automatic stop on reaching a "done" state
 

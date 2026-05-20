@@ -102,9 +102,7 @@ func toMermaidStringAny(m any) string {
 	type state = string
 	type event = string
 	switch v := m.(type) {
-	case *Machine[state, event, struct{ Count int }]:
-		return ToMermaid(v)
-	case *Machine[state, event, any]:
+	case *Machine[state, event, goldenCtx]:
 		return ToMermaid(v)
 	default:
 		return ""
@@ -114,28 +112,29 @@ func toMermaidStringAny(m any) string {
 // labelsGoldenMachine exercises EntryLabel/ExitLabel/InvokeLabel together
 // with a labeled invoke that has both OnDone and OnError targets — the
 // signature combination Issue #37 is about.
-func labelsGoldenMachine() *Machine[string, string, any] {
-	return New[string, string, any]("labeled_machine").
+func labelsGoldenMachine() *Machine[string, string, goldenCtx] {
+	return New[string, string, goldenCtx]("labeled_machine").
 		Initial("idle").
-		State("idle", func(s *StateBuilder[string, string, any]) {
-			s.Entry(func(c any) any { return c })
+		State("idle", func(s *StateBuilder[string, string, goldenCtx]) {
+			s.Entry(func(c goldenCtx) goldenCtx { return c })
 			s.EntryLabel("startEngine")
-			s.Exit(func(c any) any { return c })
+			s.Exit(func(c goldenCtx) goldenCtx { return c })
 			s.ExitLabel("stopEngine")
 			s.On("BEGIN").GoTo("calling_llm")
 		}).
-		State("calling_llm", func(s *StateBuilder[string, string, any]) {
+		State("calling_llm", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Invoke(nil, "checking_response", "failed")
 			s.InvokeLabel("call_llm")
 		}).
-		State("checking_response", func(s *StateBuilder[string, string, any]) {
+		State("checking_response", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.On("OK").GoTo("done")
 		}).
-		State("failed", func(s *StateBuilder[string, string, any]) {
+		State("failed", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Type(Final)
 		}).
-		State("done", func(s *StateBuilder[string, string, any]) {
+		State("done", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Type(Final)
 		}).
 		Build()
 }
+

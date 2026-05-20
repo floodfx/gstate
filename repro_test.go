@@ -15,16 +15,16 @@ func TestSelfTransitionReEntry(t *testing.T) {
 	// test waits deterministically without a sleep.
 	reentered := make(chan struct{})
 
-	machine := New[string, string, any]("self-trans").
+	machine := New[string, string, Context]("self-trans").
 		Initial("active").
-		State("active", func(s *StateBuilder[string, string, any]) {
-			s.Entry(func(c any) any {
+		State("active", func(s *StateBuilder[string, string, Context]) {
+			s.Entry(func(c Context) Context {
 				if entryCount.Add(1) == 2 {
 					close(reentered)
 				}
 				return c
 			})
-			s.Exit(func(c any) any {
+			s.Exit(func(c Context) Context {
 				exitCount.Add(1)
 				return c
 			})
@@ -32,7 +32,7 @@ func TestSelfTransitionReEntry(t *testing.T) {
 		}).
 		Build()
 
-	actor := Start(machine, nil)
+	actor := Start(machine, Context{})
 	defer actor.Stop()
 
 	// Initial entry happens synchronously inside Start.
@@ -59,17 +59,17 @@ func TestInfiniteLoopCircuitBreaker(t *testing.T) {
 	done := make(chan bool)
 
 	go func() {
-		machine := New[string, string, any]("loop").
+		machine := New[string, string, Context]("loop").
 			Initial("A").
-			State("A", func(s *StateBuilder[string, string, any]) {
+			State("A", func(s *StateBuilder[string, string, Context]) {
 				s.Always().GoTo("B")
 			}).
-			State("B", func(s *StateBuilder[string, string, any]) {
+			State("B", func(s *StateBuilder[string, string, Context]) {
 				s.Always().GoTo("A")
 			}).
 			Build()
 
-		Start(machine, nil)
+		Start(machine, Context{})
 		// If Start() blocks forever or handleAlwaysInternal loops forever, we won't reach here
 		// Note: Start runs loop in goroutine, but handleAlwaysInternal runs synchronously
 		// during initial entry!

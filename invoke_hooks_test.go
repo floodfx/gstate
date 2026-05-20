@@ -15,7 +15,7 @@ func TestInvokeStartedAndCompletedSuccess(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke_obs_ok").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(_ context.Context, _ Context) error {
+			s.Invoke(func(_ context.Context, _ Context, _ func(func(Context) Context)) error {
 				close(srcStart)
 				<-srcRelease
 				return nil
@@ -55,7 +55,7 @@ func TestInvokeCompletedOnError(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke_obs_err").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(_ context.Context, _ Context) error {
+			s.Invoke(func(_ context.Context, _ Context, _ func(func(Context) Context)) error {
 				return wantErr
 			}, "done", "fail")
 		}).
@@ -110,7 +110,7 @@ func TestInvokeHooksPropagateSendCtx(t *testing.T) {
 			s.On("GO").GoTo("loading")
 		}).
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(_ context.Context, _ Context) error {
+			s.Invoke(func(_ context.Context, _ Context, _ func(func(Context) Context)) error {
 				return nil
 			}, "done", "fail")
 		}).
@@ -144,7 +144,7 @@ func TestInvokeCompletedOnCancellation(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke_obs_cancel").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(ctx context.Context, _ Context) error {
+			s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
 				<-ctx.Done()
 				return ctx.Err()
 			}, "done", "fail")
@@ -175,7 +175,7 @@ func TestInvokeDoneCanAlwaysTransitionIntoAnotherInvoke(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke_always_invoke").
 		Initial("first").
 		State("first", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(_ context.Context, _ Context) error {
+			s.Invoke(func(_ context.Context, _ Context, _ func(func(Context) Context)) error {
 				return nil
 			}, "routing", "failed")
 		}).
@@ -183,7 +183,7 @@ func TestInvokeDoneCanAlwaysTransitionIntoAnotherInvoke(t *testing.T) {
 			s.Always().GoTo("second")
 		}).
 		State("second", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(ctx context.Context, _ Context) error {
+			s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
 				secondStarted <- ctx.Err()
 				return nil
 			}, "done", "failed")

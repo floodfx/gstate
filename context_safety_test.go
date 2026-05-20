@@ -3,6 +3,7 @@ package gstate
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -126,3 +127,273 @@ func (c *cloneSignalObserver) OnTransition(context.Context, TransitionEvent[cSta
 	default:
 	}
 }
+
+type raceContext struct {
+	Count int
+}
+
+func (r *raceContext) Clone() *raceContext {
+	if r == nil {
+		return nil
+	}
+	return &raceContext{Count: r.Count}
+}
+
+func TestSnapshotRacesInvokeWrites(t *testing.T) {
+	m := New[string, string, *raceContext]("race-machine").
+		Initial("a").
+		State("a", func(s *StateBuilder[string, string, *raceContext]) {
+			s.Invoke(func(ctx context.Context, snap *raceContext, mutate func(func(*raceContext) *raceContext)) error {
+				for {
+					select {
+					case <-ctx.Done():
+						return nil
+					default:
+						mutate(func(c *raceContext) *raceContext {
+							c.Count++
+							return c
+						})
+					}
+				}
+			}, "b", "c")
+		}).
+		State("b", func(_ *StateBuilder[string, string, *raceContext]) {}).
+		State("c", func(_ *StateBuilder[string, string, *raceContext]) {}).
+		Build()
+
+	a := Start(m, &raceContext{Count: 0})
+	defer a.Stop()
+
+	// Perform multiple Snapshots concurrently while the invoke loop is writing.
+	// In the new implementation, because mutate updates under the actor's write lock,
+	// and Snapshot acquires the read lock, there should be zero data races.
+	for i := 0; i < 100; i++ {
+		snap := a.Snapshot()
+		if snap.Context == nil {
+			t.Fatal("Snapshot returned a nil context")
+		}
+		if snap.Context.Count < 0 {
+			t.Errorf("coherence check failed: snapshot Count is invalid: %d", snap.Context.Count)
+		}
+	}
+}
+
+func TestInvokeMutateAfterStateExit(t *testing.T) {
+	mutateCalled := make(chan struct{})
+	mutateDone := make(chan struct{})
+	exited := make(chan struct{})
+
+	m := New[StateID, EventID, Context]("test-exit").
+		Initial("a").
+		State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(func(ctx context.Context, snap Context, mutate func(func(Context) Context)) error {
+				close(mutateCalled)
+				<-ctx.Done()
+				close(exited)
+				mutate(func(c Context) Context {
+					c.Count = 9999
+					return c
+				})
+				close(mutateDone)
+				return nil
+			}, "b", "b")
+			s.On("GO").GoTo("b")
+		}).
+		State("b", func(_ *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+
+	a := Start(m, Context{Count: 42})
+	<-mutateCalled
+
+	a.Send("GO")
+	<-exited
+
+	<-mutateDone
+
+	got := a.Context()
+	if got.Count == 9999 {
+		t.Errorf("actor context was mutated after state exit: got %v, want 42", got.Count)
+	}
+	a.Stop()
+}
+
+func TestInvokeMutateAfterStop(t *testing.T) {
+	mutateCalled := make(chan struct{})
+	mutateDone := make(chan struct{})
+	stopped := make(chan struct{})
+
+	m := New[StateID, EventID, Context]("test-stop").
+		Initial("a").
+		State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(func(ctx context.Context, snap Context, mutate func(func(Context) Context)) error {
+				close(mutateCalled)
+				<-ctx.Done()
+				close(stopped)
+				mutate(func(c Context) Context {
+					c.Count = 9999
+					return c
+				})
+				close(mutateDone)
+				return nil
+			}, "b", "b")
+		}).
+		State("b", func(_ *StateBuilder[StateID, EventID, Context]) {}).
+		Build()
+
+	a := Start(m, Context{Count: 42})
+	<-mutateCalled
+
+	a.Stop()
+	<-stopped
+
+	<-mutateDone
+
+	got := a.Context()
+	if got.Count == 9999 {
+		t.Errorf("actor context was mutated after actor stop: got %v, want 42", got.Count)
+	}
+}
+
+func TestInvokeReentryNewGeneration(t *testing.T) {
+	mutate1Called := make(chan struct{})
+	mutate1Done := make(chan struct{})
+	enter2Done := make(chan struct{})
+
+	var generation atomic.Int64
+
+	m := New[StateID, EventID, Context]("test-reentry").
+		Initial("a").
+		State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(func(ctx context.Context, snap Context, mutate func(func(Context) Context)) error {
+				if generation.CompareAndSwap(0, 1) {
+					close(mutate1Called)
+					<-ctx.Done()
+					mutate(func(c Context) Context {
+						c.Count = 9999
+						return c
+					})
+					close(mutate1Done)
+				} else {
+					generation.Store(2)
+					close(enter2Done)
+				}
+				return nil
+			}, "b", "b")
+			s.On("GO").GoTo("b")
+		}).
+		State("b", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.On("BACK").GoTo("a")
+		}).
+		Build()
+
+	a := Start(m, Context{Count: 42})
+	<-mutate1Called
+
+	a.Send("GO")
+	a.Send("BACK")
+	<-enter2Done
+
+	<-mutate1Done
+
+	got := a.Context()
+	if got.Count == 9999 {
+		t.Errorf("actor context was mutated by obsolete generation: got %v, want 42", got.Count)
+	}
+	a.Stop()
+}
+
+type stabilityCtx struct {
+	Count int
+}
+
+func (c stabilityCtx) Clone() stabilityCtx {
+	return c
+}
+
+func TestInvokeSnapStability(t *testing.T) {
+	done := make(chan struct{})
+	m := New[string, string, stabilityCtx]("snap-stability").
+		Initial("a").
+		State("a", func(s *StateBuilder[string, string, stabilityCtx]) {
+			s.Invoke(func(ctx context.Context, snap stabilityCtx, mutate func(func(stabilityCtx) stabilityCtx)) error {
+				initialSnap := snap.Count
+				mutate(func(c stabilityCtx) stabilityCtx {
+					c.Count = 999
+					return c
+				})
+				if snap.Count != initialSnap {
+					t.Errorf("snap was aliased to live context: got %d, want %d", snap.Count, initialSnap)
+				}
+				close(done)
+				return nil
+			}, "b", "c")
+		}).
+		State("b", func(_ *StateBuilder[string, string, stabilityCtx]) {}).
+		State("c", func(_ *StateBuilder[string, string, stabilityCtx]) {}).
+		Build()
+
+	a := Start(m, stabilityCtx{Count: 42})
+	defer a.Stop()
+	<-done
+}
+
+// TestInvokeParallelConcurrentMutate validates that Start's setup is locked against spawned
+// invoke goroutines' mutate calls.
+func TestInvokeParallelConcurrentMutate(t *testing.T) {
+	done1 := make(chan struct{})
+	done2 := make(chan struct{})
+
+	m := New[string, string, stabilityCtx]("parallel-concurrent").
+		Initial("par").
+		State("par", func(s *StateBuilder[string, string, stabilityCtx]) {
+			s.Type(Parallel)
+
+			s.State("r1", func(s *StateBuilder[string, string, stabilityCtx]) {
+				s.Initial("r1-active")
+				s.State("r1-active", func(s *StateBuilder[string, string, stabilityCtx]) {
+					s.Invoke(func(ctx context.Context, snap stabilityCtx, mutate func(func(stabilityCtx) stabilityCtx)) error {
+						for i := 0; i < 50; i++ {
+							mutate(func(c stabilityCtx) stabilityCtx {
+								c.Count++
+								return c
+							})
+						}
+						close(done1)
+						return nil
+					}, "r1-done", "r1-done")
+				})
+				s.State("r1-done", func(_ *StateBuilder[string, string, stabilityCtx]) {})
+			})
+
+			s.State("r2", func(s *StateBuilder[string, string, stabilityCtx]) {
+				s.Initial("r2-active")
+				s.State("r2-active", func(s *StateBuilder[string, string, stabilityCtx]) {
+					s.Invoke(func(ctx context.Context, snap stabilityCtx, mutate func(func(stabilityCtx) stabilityCtx)) error {
+						for i := 0; i < 50; i++ {
+							mutate(func(c stabilityCtx) stabilityCtx {
+								c.Count++
+								return c
+							})
+						}
+						close(done2)
+						return nil
+					}, "r2-done", "r2-done")
+				})
+				s.State("r2-done", func(_ *StateBuilder[string, string, stabilityCtx]) {})
+			})
+		}).
+		Build()
+
+	a := Start(m, stabilityCtx{Count: 0})
+	defer a.Stop()
+
+	<-done1
+	<-done2
+
+	got := a.Context()
+	if got.Count != 100 {
+		t.Errorf("actor Context Count = %d, want 100 (concurrent writes must serialize correctly)", got.Count)
+	}
+}
+
+

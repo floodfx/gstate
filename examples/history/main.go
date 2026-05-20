@@ -9,7 +9,11 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext any
+type MyContext struct{}
+
+func (c MyContext) Clone() MyContext {
+	return c
+}
 
 func main() {
 	// 1. History States allow a compound state to remember which of its children
@@ -42,7 +46,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Actor ---")
-	actor := gstate.Start(machine, nil)
+	actor := gstate.Start(machine, MyContext{})
 	fmt.Printf("Initial: %s\n", actor.State())
 
 	fmt.Println("\n--- Switching Screen to screen2 ---")

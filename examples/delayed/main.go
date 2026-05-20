@@ -9,7 +9,11 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext any
+type MyContext struct{}
+
+func (c MyContext) Clone() MyContext {
+	return c
+}
 
 func main() {
 	// 1. Delayed Transitions are transitions that happen automatically
@@ -36,11 +40,11 @@ func main() {
 		Build()
 
 	fmt.Println("--- Test Case 1: Reaching the Timeout ---")
-	gstate.Start(machine, nil)
+	gstate.Start(machine, MyContext{})
 	time.Sleep(150 * time.Millisecond) // Let it time out
 
 	fmt.Println("\n--- Test Case 2: Escaping before Timeout ---")
-	actor2 := gstate.Start(machine, nil)
+	actor2 := gstate.Start(machine, MyContext{})
 	time.Sleep(20 * time.Millisecond) // Wait a tiny bit
 
 	fmt.Println("Action: Sending 'USER_ACTION' before 100ms is up...")

@@ -11,6 +11,10 @@ type myState string
 type myEvent string
 type myCtx struct{ Count int }
 
+func (c myCtx) Clone() myCtx {
+	return c
+}
+
 func buildExampleMachine() *gstate.Machine[myState, myEvent, myCtx] {
 	return gstate.New[myState, myEvent, myCtx]("example").
 		Initial("idle").

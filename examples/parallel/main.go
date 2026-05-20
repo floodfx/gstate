@@ -9,7 +9,11 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext any
+type MyContext struct{}
+
+func (c MyContext) Clone() MyContext {
+	return c
+}
 
 func main() {
 	// 1. Parallel States allow a machine to be in multiple states simultaneously.
@@ -47,7 +51,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Parallel Actor ---")
-	actor := gstate.Start(machine, nil)
+	actor := gstate.Start(machine, MyContext{})
 
 	// Notice that we are in multiple leaf states at once.
 	fmt.Printf("Active States: %v\n", actor.States())

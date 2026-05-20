@@ -9,7 +9,11 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext any
+type MyContext struct{}
+
+func (c MyContext) Clone() MyContext {
+	return c
+}
 
 func main() {
 	// 1. Hierarchical States allow nesting state machines inside other states.
@@ -48,7 +52,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Actor ---")
-	actor := gstate.Start(machine, nil)
+	actor := gstate.Start(machine, MyContext{})
 
 	// actor.States() returns ALL active states from root to leaf.
 	fmt.Printf("Initial States Stack: %v\n", actor.States())

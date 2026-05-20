@@ -56,16 +56,21 @@ func TestSCXMLGoldenExamples(t *testing.T) {
 	}
 }
 
+type goldenCtx struct {
+	Count int
+}
+
+func (c goldenCtx) Clone() goldenCtx {
+	return c
+}
+
 // toSCXMLStringAny is a typed helper that converts *Machine to SCXML string
 // for known test types.
 func toSCXMLStringAny(m any) string {
 	type state = string
 	type event = string
 	switch v := m.(type) {
-	case *Machine[state, event, struct{ Count int }]:
-		s, _ := ToSCXMLString(v)
-		return s
-	case *Machine[state, event, any]:
+	case *Machine[state, event, goldenCtx]:
 		s, _ := ToSCXMLString(v)
 		return s
 	default:
@@ -73,57 +78,57 @@ func toSCXMLStringAny(m any) string {
 	}
 }
 
-func basicGoldenMachine() *Machine[string, string, struct{ Count int }] {
-	return New[string, string, struct{ Count int }]("counter").
+func basicGoldenMachine() *Machine[string, string, goldenCtx] {
+	return New[string, string, goldenCtx]("counter").
 		Initial("idle").
-		State("idle", func(s *StateBuilder[string, string, struct{ Count int }]) {
+		State("idle", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.On("START").GoTo("active")
 		}).
-		State("active", func(s *StateBuilder[string, string, struct{ Count int }]) {
+		State("active", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.On("STOP").GoTo("idle")
 		}).
 		Build()
 }
 
-func hierarchyGoldenMachine() *Machine[string, string, any] {
-	return New[string, string, any]("hierarchy").
+func hierarchyGoldenMachine() *Machine[string, string, goldenCtx] {
+	return New[string, string, goldenCtx]("hierarchy").
 		Initial("parent").
-		State("parent", func(s *StateBuilder[string, string, any]) {
+		State("parent", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Initial("child1")
 			s.On("EXIT_ALL").GoTo("done")
-			s.State("child1", func(s *StateBuilder[string, string, any]) {
+			s.State("child1", func(s *StateBuilder[string, string, goldenCtx]) {
 				s.On("TO_CHILD2").GoTo("child2")
 			})
-			s.State("child2", func(s *StateBuilder[string, string, any]) {
+			s.State("child2", func(s *StateBuilder[string, string, goldenCtx]) {
 				s.On("TO_CHILD1").GoTo("child1")
 			})
 		}).
-		State("done", func(s *StateBuilder[string, string, any]) {
+		State("done", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Type(Final)
 		}).
 		Build()
 }
 
-func parallelGoldenMachine() *Machine[string, string, any] {
-	return New[string, string, any]("input_system").
+func parallelGoldenMachine() *Machine[string, string, goldenCtx] {
+	return New[string, string, goldenCtx]("input_system").
 		Initial("active").
-		State("active", func(s *StateBuilder[string, string, any]) {
+		State("active", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Type(Parallel)
-			s.State("keyboard", func(s *StateBuilder[string, string, any]) {
+			s.State("keyboard", func(s *StateBuilder[string, string, goldenCtx]) {
 				s.Initial("caps_off")
-				s.State("caps_off", func(s *StateBuilder[string, string, any]) {
+				s.State("caps_off", func(s *StateBuilder[string, string, goldenCtx]) {
 					s.On("CAPS_LOCK").GoTo("caps_on")
 				})
-				s.State("caps_on", func(s *StateBuilder[string, string, any]) {
+				s.State("caps_on", func(s *StateBuilder[string, string, goldenCtx]) {
 					s.On("CAPS_LOCK").GoTo("caps_off")
 				})
 			})
-			s.State("mouse", func(s *StateBuilder[string, string, any]) {
+			s.State("mouse", func(s *StateBuilder[string, string, goldenCtx]) {
 				s.Initial("not_clicked")
-				s.State("not_clicked", func(s *StateBuilder[string, string, any]) {
+				s.State("not_clicked", func(s *StateBuilder[string, string, goldenCtx]) {
 					s.On("CLICK").GoTo("clicked")
 				})
-				s.State("clicked", func(s *StateBuilder[string, string, any]) {
+				s.State("clicked", func(s *StateBuilder[string, string, goldenCtx]) {
 					s.On("RELEASE").GoTo("not_clicked")
 				})
 			})
@@ -131,46 +136,46 @@ func parallelGoldenMachine() *Machine[string, string, any] {
 		Build()
 }
 
-func historyGoldenMachine() *Machine[string, string, any] {
-	return New[string, string, any]("history").
+func historyGoldenMachine() *Machine[string, string, goldenCtx] {
+	return New[string, string, goldenCtx]("history").
 		Initial("parent").
-		State("parent", func(s *StateBuilder[string, string, any]) {
+		State("parent", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Initial("s1")
 			s.History(Shallow)
-			s.State("s1", func(s *StateBuilder[string, string, any]) {
+			s.State("s1", func(s *StateBuilder[string, string, goldenCtx]) {
 				s.On("TO_S2").GoTo("s2")
 			})
-			s.State("s2", func(s *StateBuilder[string, string, any]) {})
+			s.State("s2", func(s *StateBuilder[string, string, goldenCtx]) {})
 			s.On("GO_AWAY").GoTo("other")
 		}).
-		State("other", func(s *StateBuilder[string, string, any]) {
+		State("other", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.On("BACK").GoTo("parent")
 		}).
 		Build()
 }
 
-func invokeGoldenMachine() *Machine[string, string, any] {
-	return New[string, string, any]("invoke").
+func invokeGoldenMachine() *Machine[string, string, goldenCtx] {
+	return New[string, string, goldenCtx]("invoke").
 		Initial("loading").
-		State("loading", func(s *StateBuilder[string, string, any]) {
+		State("loading", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Invoke(nil, "success", "failure")
 		}).
-		State("success", func(s *StateBuilder[string, string, any]) {
+		State("success", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Type(Final)
 		}).
-		State("failure", func(s *StateBuilder[string, string, any]) {
+		State("failure", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.Type(Final)
 		}).
 		Build()
 }
 
-func delayedGoldenMachine() *Machine[string, string, any] {
-	return New[string, string, any]("delayed").
+func delayedGoldenMachine() *Machine[string, string, goldenCtx] {
+	return New[string, string, goldenCtx]("delayed").
 		Initial("idle").
-		State("idle", func(s *StateBuilder[string, string, any]) {
+		State("idle", func(s *StateBuilder[string, string, goldenCtx]) {
 			s.After(100 * time.Millisecond).GoTo("timeout")
 		}).
-		State("timeout", func(s *StateBuilder[string, string, any]) {}).
+		State("timeout", func(s *StateBuilder[string, string, goldenCtx]) {}).
 		Build()
 }
 
@@ -209,3 +214,4 @@ func TestSCXMLValidatesAgainstW3C(t *testing.T) {
 		}
 	})
 }
+

@@ -43,7 +43,7 @@ const (
 
 // Machine is the static, immutable definition of a statechart.
 // It serves as a blueprint for creating [Actor] instances.
-type Machine[S ~string, E ~string, C any] struct {
+type Machine[S ~string, E ~string, C Cloner[C]] struct {
 	// ID identifies this machine definition.
 	ID string
 	// Initial is the state to enter when the machine starts.
@@ -53,7 +53,7 @@ type Machine[S ~string, E ~string, C any] struct {
 }
 
 // StateDef defines the properties and behavior of a single state in the machine.
-type StateDef[S ~string, E ~string, C any] struct {
+type StateDef[S ~string, E ~string, C Cloner[C]] struct {
 	// ID uniquely identifies this state within the machine.
 	ID S
 	// Type is the kind of state: Atomic, Compound, Parallel, or Final.
@@ -93,7 +93,7 @@ type StateDef[S ~string, E ~string, C any] struct {
 }
 
 // TransitionDef defines the rules for moving from one state to another.
-type TransitionDef[S ~string, E ~string, C any] struct {
+type TransitionDef[S ~string, E ~string, C Cloner[C]] struct {
 	// Target is the state to transition to.
 	Target S
 	// Guard is an optional predicate that must return true for the transition to fire.
@@ -111,34 +111,50 @@ type TransitionDef[S ~string, E ~string, C any] struct {
 
 // InvokeDef defines an asynchronous service managed during a state's lifecycle.
 // The service is started in a goroutine on state entry and cancelled on exit.
-type InvokeDef[S ~string, E ~string, C any] struct {
-	// Src is the function to run. It receives a context that is cancelled on state exit.
-	Src func(context.Context, C) error
-	// OnDone is the target state when Src returns nil.
+type InvokeDef[S ~string, E ~string, C Cloner[C]] struct {
+	// Func is the function to run. It receives a context cancelled on state exit,
+	// a defensive snapshot of the context taken at state entry, and a thread-safe
+	// mutate callback for applying writes to the live context.
+	//
+	// Parameters:
+	// - ctx: cancelled when the state exits or the actor stops. Standard context.Context semantics.
+	// - snap: a deep copy of the actor's context taken at the moment of state entry, via C.Clone().
+	//   Reads are lock-free and never race because the invoke goroutine owns this value.
+	// - mutate: applies updates to the live actor context under the actor's write lock.
+	//   The result of the mutation function replaces the live context. mutate is synchronous
+	//   and returns after the write commits. It no-ops if the state has exited or the actor stopped.
+	//
+	// This field was previously named Src.
+	Func func(ctx context.Context, snap C, mutate func(func(C) C)) error
+	// OnDone is the target state when Func returns nil.
 	OnDone S
-	// OnError is the target state when Src returns a non-nil error.
+	// OnError is the target state when Func returns a non-nil error.
 	OnError S
 
 	// label is a human-readable label for this invocation, used in Mermaid output.
 	label string
 }
 
-// Cloner is an optional interface that Context types can implement to provide
-// safe deep-copying during snapshots.
+// Cloner is required of every context type used with a Machine.
+// Clone() must return an independent deep copy: mutations to the returned
+// value must not be observable through any reference to the original.
+// For struct types containing no references (no pointers, slices, maps, channels, or funcs),
+// func (c T) Clone() T { return c } is sufficient. For pointer types, ensure
+// referenced data (slices, maps, nested structs) is also deep-copied.
 type Cloner[C any] interface {
 	Clone() C
 }
 
 // Snapshot is a serializable point-in-time capture of an [Actor]'s state.
-type Snapshot[S ~string, C any] struct {
+type Snapshot[S ~string, C Cloner[C]] struct {
 	// Active lists the currently active state IDs.
 	Active []S `json:"active"`
 	// History maps compound state IDs to their last active child.
 	History map[S]S `json:"history"`
-	// Context is the current data. If C contains reference types,
-	// implement [Cloner] for safe deep-copying.
+	// Context is the deep-copied context data, captured safely using [Cloner.Clone].
 	Context C `json:"context"`
 	// ActorID is the stable identifier of the actor that produced this snapshot.
 	// [Hydrate] restores it so telemetry correlation survives serialization.
 	ActorID ActorID `json:"actor_id,omitempty"`
 }
+
