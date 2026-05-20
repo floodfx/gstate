@@ -98,7 +98,7 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	Target S
 	// Guard is an optional predicate that must return true for the transition to fire.
 	Guard func(D) bool
-	// Action is a pure function that updates the context during the transition.
+	// Action is a pure function that updates the data during the transition.
 	Action func(D) D
 	// After is the delay before a timed transition fires.
 	After time.Duration
@@ -113,15 +113,15 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 // The service is started in a goroutine on state entry and cancelled on exit.
 type InvokeDef[S ~string, E ~string, D Cloner[D]] struct {
 	// Func is the function to run. It receives a context cancelled on state exit,
-	// a defensive snapshot of the context taken at state entry, and a thread-safe
-	// mutate callback for applying writes to the live context.
+	// a defensive snapshot of the data taken at state entry, and a thread-safe
+	// mutate callback for applying writes to the live data.
 	//
 	// Parameters:
 	// - ctx: cancelled when the state exits or the actor stops. Standard context.Context semantics.
-	// - snap: a deep copy of the actor's context taken at the moment of state entry, via C.Clone().
+	// - snap: a deep copy of the actor's data taken at the moment of state entry, via D.Clone().
 	//   Reads are lock-free and never race because the invoke goroutine owns this value.
-	// - mutate: applies updates to the live actor context under the actor's write lock.
-	//   The result of the mutation function replaces the live context. mutate is synchronous
+	// - mutate: applies updates to the live actor data under the actor's write lock.
+	//   The result of the mutation function replaces the live data. mutate is synchronous
 	//   and returns after the write commits. It no-ops if the state has exited or the actor stopped.
 	//
 	// This field was previously named Src.
@@ -135,7 +135,7 @@ type InvokeDef[S ~string, E ~string, D Cloner[D]] struct {
 	label string
 }
 
-// Cloner is required of every context type used with a Machine.
+// Cloner is required of every data type used with a Machine.
 // Clone() must return an independent deep copy: mutations to the returned
 // value must not be observable through any reference to the original.
 // For struct types containing no references (no pointers, slices, maps, channels, or funcs),
