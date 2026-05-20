@@ -248,7 +248,7 @@ type SCXMLSend struct {
 }
 
 // ToSCXML converts a gstate Machine definition into an SCXML document.
-func ToSCXML[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) (*SCXMLDocument, error) {
+func ToSCXML[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D]) (*SCXMLDocument, error) {
 	doc := &SCXMLDocument{
 		XMLNS:   "http://www.w3.org/2005/07/scxml",
 		Version: "1.0",
@@ -256,7 +256,7 @@ func ToSCXML[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) (*SCXMLDocu
 		Initial: string(m.Initial),
 	}
 
-	topLevel := make([]*StateDef[S, E, C], 0)
+	topLevel := make([]*StateDef[S, E, D], 0)
 	for _, s := range m.States {
 		if s.parent == "" {
 			topLevel = append(topLevel, s)
@@ -278,7 +278,7 @@ func ToSCXML[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) (*SCXMLDocu
 	return doc, nil
 }
 
-func convertStateNode[S ~string, E ~string, C Cloner[C]](def *StateDef[S, E, C], m *Machine[S, E, C]) (SCXMLNode, error) {
+func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D], m *Machine[S, E, D]) (SCXMLNode, error) {
 	if def.Type == Final {
 		return convertFinalNode(def, m)
 	}
@@ -382,7 +382,7 @@ func convertStateNode[S ~string, E ~string, C Cloner[C]](def *StateDef[S, E, C],
 	return node, nil
 }
 
-func convertFinalNode[S ~string, E ~string, C Cloner[C]](def *StateDef[S, E, C], m *Machine[S, E, C]) (SCXMLNode, error) {
+func convertFinalNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D], m *Machine[S, E, D]) (SCXMLNode, error) {
 	node := SCXMLNode{Kind: NodeFinal, ID: string(def.ID)}
 	if len(def.Entry) > 0 {
 		node.OnEntry = &SCXMLOnEntry{}
@@ -393,7 +393,7 @@ func convertFinalNode[S ~string, E ~string, C Cloner[C]](def *StateDef[S, E, C],
 	return node, nil
 }
 
-func convertTransition[S ~string, E ~string, C Cloner[C]](t *TransitionDef[S, E, C], event string) *SCXMLTransition {
+func convertTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E, D], event string) *SCXMLTransition {
 	tr := &SCXMLTransition{Event: event, Target: string(t.Target)}
 	if t.Guard != nil {
 		if t.guardName != "" {
@@ -408,8 +408,8 @@ func convertTransition[S ~string, E ~string, C Cloner[C]](t *TransitionDef[S, E,
 	return tr
 }
 
-func sortedChildren[S ~string, E ~string, C Cloner[C]](def *StateDef[S, E, C]) []*StateDef[S, E, C] {
-	result := make([]*StateDef[S, E, C], 0, len(def.States))
+func sortedChildren[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D]) []*StateDef[S, E, D] {
+	result := make([]*StateDef[S, E, D], 0, len(def.States))
 	for _, v := range def.States {
 		result = append(result, v)
 	}
@@ -424,7 +424,7 @@ func formatDuration(d time.Duration) string {
 }
 
 // ToSCXMLString converts a Machine to a pretty-printed SCXML string.
-func ToSCXMLString[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) (string, error) {
+func ToSCXMLString[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D]) (string, error) {
 	doc, err := ToSCXML(m)
 	if err != nil {
 		return "", err
@@ -437,7 +437,7 @@ func ToSCXMLString[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) (stri
 }
 
 // ToSCXMLBytes converts a Machine to SCXML bytes with XML header.
-func ToSCXMLBytes[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) ([]byte, error) {
+func ToSCXMLBytes[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D]) ([]byte, error) {
 	data, err := ToSCXMLString(m)
 	if err != nil {
 		return nil, err

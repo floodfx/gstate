@@ -7,35 +7,35 @@ import (
 )
 
 // MachineBuilder provides a fluent API for declaring statechart definitions.
-type MachineBuilder[S ~string, E ~string, C Cloner[C]] struct {
-	machine *Machine[S, E, C]
+type MachineBuilder[S ~string, E ~string, D Cloner[D]] struct {
+	machine *Machine[S, E, D]
 }
 
 // New initiates the creation of a new statechart machine definition.
-func New[S ~string, E ~string, C Cloner[C]](id string) *MachineBuilder[S, E, C] {
-	return &MachineBuilder[S, E, C]{
-		machine: &Machine[S, E, C]{
+func New[S ~string, E ~string, D Cloner[D]](id string) *MachineBuilder[S, E, D] {
+	return &MachineBuilder[S, E, D]{
+		machine: &Machine[S, E, D]{
 			ID:     id,
-			States: make(map[S]*StateDef[S, E, C]),
+			States: make(map[S]*StateDef[S, E, D]),
 		},
 	}
 }
 
 // Initial sets the starting state for the machine.
-func (m *MachineBuilder[S, E, C]) Initial(id S) *MachineBuilder[S, E, C] {
+func (m *MachineBuilder[S, E, D]) Initial(id S) *MachineBuilder[S, E, D] {
 	m.machine.Initial = id
 	return m
 }
 
 // State defines a top-level state in the machine.
 // The provided function is used to configure the state's behavior via a StateBuilder.
-func (m *MachineBuilder[S, E, C]) State(id S, fn func(*StateBuilder[S, E, C])) *MachineBuilder[S, E, C] {
-	s := &StateBuilder[S, E, C]{
+func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *MachineBuilder[S, E, D] {
+	s := &StateBuilder[S, E, D]{
 		machine: m.machine,
-		state: &StateDef[S, E, C]{
+		state: &StateDef[S, E, D]{
 			ID:          id,
-			States:      make(map[S]*StateDef[S, E, C]),
-			Transitions: make(map[E][]*TransitionDef[S, E, C]),
+			States:      make(map[S]*StateDef[S, E, D]),
+			Transitions: make(map[E][]*TransitionDef[S, E, D]),
 		},
 	}
 	fn(s)
@@ -46,7 +46,7 @@ func (m *MachineBuilder[S, E, C]) State(id S, fn func(*StateBuilder[S, E, C])) *
 // Build finalizes the machine definition and returns an immutable Machine instance.
 // It performs a static-analysis validation pass and panics if any invalid state,
 // transition target, or invoke target is detected.
-func (m *MachineBuilder[S, E, C]) Build() *Machine[S, E, C] {
+func (m *MachineBuilder[S, E, D]) Build() *Machine[S, E, D] {
 	// Pre-compute metadata for all states
 	for id, state := range m.machine.States {
 		if state.parent == "" {
@@ -59,7 +59,7 @@ func (m *MachineBuilder[S, E, C]) Build() *Machine[S, E, C] {
 	return m.machine
 }
 
-func (m *MachineBuilder[S, E, C]) validate() {
+func (m *MachineBuilder[S, E, D]) validate() {
 	if m.machine.Initial != "" {
 		if _, ok := m.machine.States[m.machine.Initial]; !ok {
 			panic(fmt.Errorf("gstate: machine %q has invalid initial state: %q does not exist", m.machine.ID, m.machine.Initial))
@@ -119,7 +119,7 @@ func (m *MachineBuilder[S, E, C]) validate() {
 	}
 }
 
-func (m *MachineBuilder[S, E, C]) computeMetadata(id S, depth int, path []S) {
+func (m *MachineBuilder[S, E, D]) computeMetadata(id S, depth int, path []S) {
 	state, ok := m.machine.States[id]
 	if !ok {
 		return
@@ -138,20 +138,20 @@ func (m *MachineBuilder[S, E, C]) computeMetadata(id S, depth int, path []S) {
 }
 
 // StateBuilder provides methods for configuring a specific state's properties and children.
-type StateBuilder[S ~string, E ~string, C Cloner[C]] struct {
-	machine *Machine[S, E, C]
-	state   *StateDef[S, E, C]
+type StateBuilder[S ~string, E ~string, D Cloner[D]] struct {
+	machine *Machine[S, E, D]
+	state   *StateDef[S, E, D]
 }
 
 // State defines a nested child state.
-func (s *StateBuilder[S, E, C]) State(id S, fn func(*StateBuilder[S, E, C])) {
-	child := &StateBuilder[S, E, C]{
+func (s *StateBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) {
+	child := &StateBuilder[S, E, D]{
 		machine: s.machine,
-		state: &StateDef[S, E, C]{
+		state: &StateDef[S, E, D]{
 			ID:          id,
 			parent:      s.state.ID,
-			States:      make(map[S]*StateDef[S, E, C]),
-			Transitions: make(map[E][]*TransitionDef[S, E, C]),
+			States:      make(map[S]*StateDef[S, E, D]),
+			Transitions: make(map[E][]*TransitionDef[S, E, D]),
 		},
 	}
 	fn(child)
@@ -164,34 +164,34 @@ func (s *StateBuilder[S, E, C]) State(id S, fn func(*StateBuilder[S, E, C])) {
 }
 
 // Initial sets the default child state to enter for this compound state.
-func (s *StateBuilder[S, E, C]) Initial(id S) {
+func (s *StateBuilder[S, E, D]) Initial(id S) {
 	s.state.Initial = id
 }
 
 // Type explicitly sets the StateType (e.g., Parallel or Final).
-func (s *StateBuilder[S, E, C]) Type(t StateType) {
+func (s *StateBuilder[S, E, D]) Type(t StateType) {
 	s.state.Type = t
 }
 
 // Entry adds a function to be executed when this state is entered.
-func (s *StateBuilder[S, E, C]) Entry(fn func(C) C) {
+func (s *StateBuilder[S, E, D]) Entry(fn func(D) D) {
 	s.state.Entry = append(s.state.Entry, fn)
 }
 
 // EntryLabel sets a human-readable label for the state's Entry actions.
 // Used in Mermaid output to identify what runs on entry.
-func (s *StateBuilder[S, E, C]) EntryLabel(name string) {
+func (s *StateBuilder[S, E, D]) EntryLabel(name string) {
 	s.state.entryLabel = name
 }
 
 // Exit adds a function to be executed when this state is left.
-func (s *StateBuilder[S, E, C]) Exit(fn func(C) C) {
+func (s *StateBuilder[S, E, D]) Exit(fn func(D) D) {
 	s.state.Exit = append(s.state.Exit, fn)
 }
 
 // ExitLabel sets a human-readable label for the state's Exit actions.
 // Used in Mermaid output to identify what runs on exit.
-func (s *StateBuilder[S, E, C]) ExitLabel(name string) {
+func (s *StateBuilder[S, E, D]) ExitLabel(name string) {
 	s.state.exitLabel = name
 }
 
@@ -202,8 +202,8 @@ func (s *StateBuilder[S, E, C]) ExitLabel(name string) {
 //   For details on the parameter contracts, see the documentation for InvokeDef.Func.
 // - onDone: state to transition to on success (when fn returns nil).
 // - onError: state to transition to on failure (when fn returns a non-nil error).
-func (s *StateBuilder[S, E, C]) Invoke(fn func(ctx context.Context, snap C, mutate func(func(C) C)) error, onDone S, onError S) {
-	s.state.Invoke = &InvokeDef[S, E, C]{
+func (s *StateBuilder[S, E, D]) Invoke(fn func(ctx context.Context, snap D, mutate func(func(D) D)) error, onDone S, onError S) {
+	s.state.Invoke = &InvokeDef[S, E, D]{
 		Func:    fn,
 		OnDone:  onDone,
 		OnError: onError,
@@ -213,20 +213,20 @@ func (s *StateBuilder[S, E, C]) Invoke(fn func(ctx context.Context, snap C, muta
 // InvokeLabel sets a human-readable label for the state's invoked service.
 // Used in Mermaid output (e.g. as the diamond pseudo-state label).
 // No-op if Invoke has not been called yet.
-func (s *StateBuilder[S, E, C]) InvokeLabel(name string) {
+func (s *StateBuilder[S, E, D]) InvokeLabel(name string) {
 	if s.state.Invoke != nil {
 		s.state.Invoke.label = name
 	}
 }
 
 // History enables history tracking for this state.
-func (s *StateBuilder[S, E, C]) History(t HistoryType) {
+func (s *StateBuilder[S, E, D]) History(t HistoryType) {
 	s.state.History = t
 }
 
 // On defines a transition triggered by a specific event.
-func (s *StateBuilder[S, E, C]) On(event E) *TransitionBuilder[S, E, C] {
-	t := &TransitionBuilder[S, E, C]{}
+func (s *StateBuilder[S, E, D]) On(event E) *TransitionBuilder[S, E, D] {
+	t := &TransitionBuilder[S, E, D]{}
 	if _, exists := s.state.Transitions[event]; !exists {
 		s.state.eventOrder = append(s.state.eventOrder, event)
 	}
@@ -235,49 +235,49 @@ func (s *StateBuilder[S, E, C]) On(event E) *TransitionBuilder[S, E, C] {
 }
 
 // Always defines a transient transition that fires immediately if its guard passes.
-func (s *StateBuilder[S, E, C]) Always() *TransitionBuilder[S, E, C] {
-	t := &TransitionBuilder[S, E, C]{}
+func (s *StateBuilder[S, E, D]) Always() *TransitionBuilder[S, E, D] {
+	t := &TransitionBuilder[S, E, D]{}
 	s.state.Always = append(s.state.Always, &t.def)
 	return t
 }
 
 // After defines a transition that fires automatically after a duration.
-func (s *StateBuilder[S, E, C]) After(d time.Duration) *TransitionBuilder[S, E, C] {
-	t := &TransitionBuilder[S, E, C]{def: TransitionDef[S, E, C]{After: d}}
+func (s *StateBuilder[S, E, D]) After(d time.Duration) *TransitionBuilder[S, E, D] {
+	t := &TransitionBuilder[S, E, D]{def: TransitionDef[S, E, D]{After: d}}
 	s.state.Delayed = append(s.state.Delayed, &t.def)
 	return t
 }
 
 // TransitionBuilder provides a fluent API for configuring a state transition.
-type TransitionBuilder[S ~string, E ~string, C Cloner[C]] struct {
-	def TransitionDef[S, E, C]
+type TransitionBuilder[S ~string, E ~string, D Cloner[D]] struct {
+	def TransitionDef[S, E, D]
 }
 
 // Guard adds a conditional check to the transition.
-func (t *TransitionBuilder[S, E, C]) Guard(fn func(C) bool) *TransitionBuilder[S, E, C] {
+func (t *TransitionBuilder[S, E, D]) Guard(fn func(D) bool) *TransitionBuilder[S, E, D] {
 	t.def.Guard = fn
 	return t
 }
 
 // GuardLabel sets an optional label for the guard condition.
-func (t *TransitionBuilder[S, E, C]) GuardLabel(name string) *TransitionBuilder[S, E, C] {
+func (t *TransitionBuilder[S, E, D]) GuardLabel(name string) *TransitionBuilder[S, E, D] {
 	t.def.guardName = name
 	return t
 }
 
 // Assign adds a context update action to the transition.
-func (t *TransitionBuilder[S, E, C]) Assign(fn func(C) C) *TransitionBuilder[S, E, C] {
+func (t *TransitionBuilder[S, E, D]) Assign(fn func(D) D) *TransitionBuilder[S, E, D] {
 	t.def.Action = fn
 	return t
 }
 
 // ActionLabel sets an optional label for the action.
-func (t *TransitionBuilder[S, E, C]) ActionLabel(name string) *TransitionBuilder[S, E, C] {
+func (t *TransitionBuilder[S, E, D]) ActionLabel(name string) *TransitionBuilder[S, E, D] {
 	t.def.actionName = name
 	return t
 }
 
 // GoTo sets the target state for the transition.
-func (t *TransitionBuilder[S, E, C]) GoTo(target S) {
+func (t *TransitionBuilder[S, E, D]) GoTo(target S) {
 	t.def.Target = target
 }

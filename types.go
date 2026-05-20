@@ -43,17 +43,17 @@ const (
 
 // Machine is the static, immutable definition of a statechart.
 // It serves as a blueprint for creating [Actor] instances.
-type Machine[S ~string, E ~string, C Cloner[C]] struct {
+type Machine[S ~string, E ~string, D Cloner[D]] struct {
 	// ID identifies this machine definition.
 	ID string
 	// Initial is the state to enter when the machine starts.
 	Initial S
 	// States is a flat map of every state (including nested) for O(1) lookup.
-	States map[S]*StateDef[S, E, C]
+	States map[S]*StateDef[S, E, D]
 }
 
 // StateDef defines the properties and behavior of a single state in the machine.
-type StateDef[S ~string, E ~string, C Cloner[C]] struct {
+type StateDef[S ~string, E ~string, D Cloner[D]] struct {
 	// ID uniquely identifies this state within the machine.
 	ID S
 	// Type is the kind of state: Atomic, Compound, Parallel, or Final.
@@ -61,20 +61,20 @@ type StateDef[S ~string, E ~string, C Cloner[C]] struct {
 	// Initial is the default child state to enter for Compound states.
 	Initial S
 	// States maps child state IDs to their definitions.
-	States map[S]*StateDef[S, E, C]
+	States map[S]*StateDef[S, E, D]
 	// Transitions maps event IDs to ordered transition definitions.
 	// The first transition whose guard passes (or has no guard) fires.
-	Transitions map[E][]*TransitionDef[S, E, C]
+	Transitions map[E][]*TransitionDef[S, E, D]
 	// Always holds eventless transitions evaluated on state entry in declaration order.
-	Always []*TransitionDef[S, E, C]
+	Always []*TransitionDef[S, E, D]
 	// Delayed holds time-based transitions that fire after their After duration.
-	Delayed []*TransitionDef[S, E, C]
+	Delayed []*TransitionDef[S, E, D]
 	// Entry holds functions called in order when entering this state.
-	Entry []func(C) C
+	Entry []func(D) D
 	// Exit holds functions called in order when leaving this state.
-	Exit []func(C) C
+	Exit []func(D) D
 	// Invoke defines an async service started on entry and cancelled on exit.
-	Invoke *InvokeDef[S, E, C]
+	Invoke *InvokeDef[S, E, D]
 	// History controls history tracking: None, Shallow, or Deep.
 	History HistoryType
 
@@ -93,13 +93,13 @@ type StateDef[S ~string, E ~string, C Cloner[C]] struct {
 }
 
 // TransitionDef defines the rules for moving from one state to another.
-type TransitionDef[S ~string, E ~string, C Cloner[C]] struct {
+type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	// Target is the state to transition to.
 	Target S
 	// Guard is an optional predicate that must return true for the transition to fire.
-	Guard func(C) bool
+	Guard func(D) bool
 	// Action is a pure function that updates the context during the transition.
-	Action func(C) C
+	Action func(D) D
 	// After is the delay before a timed transition fires.
 	After time.Duration
 
@@ -111,7 +111,7 @@ type TransitionDef[S ~string, E ~string, C Cloner[C]] struct {
 
 // InvokeDef defines an asynchronous service managed during a state's lifecycle.
 // The service is started in a goroutine on state entry and cancelled on exit.
-type InvokeDef[S ~string, E ~string, C Cloner[C]] struct {
+type InvokeDef[S ~string, E ~string, D Cloner[D]] struct {
 	// Func is the function to run. It receives a context cancelled on state exit,
 	// a defensive snapshot of the context taken at state entry, and a thread-safe
 	// mutate callback for applying writes to the live context.
@@ -125,7 +125,7 @@ type InvokeDef[S ~string, E ~string, C Cloner[C]] struct {
 	//   and returns after the write commits. It no-ops if the state has exited or the actor stopped.
 	//
 	// This field was previously named Src.
-	Func func(ctx context.Context, snap C, mutate func(func(C) C)) error
+	Func func(ctx context.Context, snap D, mutate func(func(D) D)) error
 	// OnDone is the target state when Func returns nil.
 	OnDone S
 	// OnError is the target state when Func returns a non-nil error.
@@ -141,18 +141,18 @@ type InvokeDef[S ~string, E ~string, C Cloner[C]] struct {
 // For struct types containing no references (no pointers, slices, maps, channels, or funcs),
 // func (c T) Clone() T { return c } is sufficient. For pointer types, ensure
 // referenced data (slices, maps, nested structs) is also deep-copied.
-type Cloner[C any] interface {
-	Clone() C
+type Cloner[T any] interface {
+	Clone() T
 }
 
 // Snapshot is a serializable point-in-time capture of an [Actor]'s state.
-type Snapshot[S ~string, C Cloner[C]] struct {
+type Snapshot[S ~string, D Cloner[D]] struct {
 	// Active lists the currently active state IDs.
 	Active []S `json:"active"`
 	// History maps compound state IDs to their last active child.
 	History map[S]S `json:"history"`
 	// Context is the deep-copied context data, captured safely using [Cloner.Clone].
-	Context C `json:"context"`
+	Context D `json:"context"`
 	// ActorID is the stable identifier of the actor that produced this snapshot.
 	// [Hydrate] restores it so telemetry correlation survives serialization.
 	ActorID ActorID `json:"actor_id,omitempty"`

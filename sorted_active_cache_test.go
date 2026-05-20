@@ -20,17 +20,17 @@ func (c cacheCtx) Clone() cacheCtx {
 func TestSortedActiveCacheFlat(t *testing.T) {
 	type S = string
 	type E = string
-	type C = cacheCtx
+	type D = cacheCtx
 
-	m := New[S, E, C]("cache-flat").
+	m := New[S, E, D]("cache-flat").
 		Initial("a").
-		State("a", func(s *StateBuilder[S, E, C]) {
+		State("a", func(s *StateBuilder[S, E, D]) {
 			s.On("GO").GoTo("b")
 		}).
-		State("b", func(s *StateBuilder[S, E, C]) {
+		State("b", func(s *StateBuilder[S, E, D]) {
 			s.On("GO").GoTo("c")
 		}).
-		State("c", func(s *StateBuilder[S, E, C]) {
+		State("c", func(s *StateBuilder[S, E, D]) {
 			s.On("GO").GoTo("a")
 		}).
 		Build()
@@ -40,8 +40,8 @@ func TestSortedActiveCacheFlat(t *testing.T) {
 	var mu sync.Mutex
 	done := make(chan struct{})
 
-	obs := ObserverFuncs[S, E, C]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, C]) {
+	obs := ObserverFuncs[S, E, D]{
+		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
 			// OnTransition fires under the actor lock, so a.active is
 			// already updated. We can't call States() here (it takes
 			// RLock, we hold the write lock). Record e.To instead.
@@ -83,19 +83,19 @@ func TestSortedActiveCacheFlat(t *testing.T) {
 func TestSortedActiveCacheHierarchical(t *testing.T) {
 	type S = string
 	type E = string
-	type C = cacheCtx
+	type D = cacheCtx
 
-	m := New[S, E, C]("cache-hier").
+	m := New[S, E, D]("cache-hier").
 		Initial("left").
-		State("left", func(s *StateBuilder[S, E, C]) {
+		State("left", func(s *StateBuilder[S, E, D]) {
 			s.Initial("left.child")
-			s.State("left.child", func(cs *StateBuilder[S, E, C]) {
+			s.State("left.child", func(cs *StateBuilder[S, E, D]) {
 				cs.On("SWAP").GoTo("right")
 			})
 		}).
-		State("right", func(s *StateBuilder[S, E, C]) {
+		State("right", func(s *StateBuilder[S, E, D]) {
 			s.Initial("right.child")
-			s.State("right.child", func(cs *StateBuilder[S, E, C]) {
+			s.State("right.child", func(cs *StateBuilder[S, E, D]) {
 				cs.On("SWAP").GoTo("left")
 			})
 		}).
@@ -109,8 +109,8 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 	done := make(chan struct{})
 	const rounds = 6
 
-	obs := ObserverFuncs[S, E, C]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, C]) {
+	obs := ObserverFuncs[S, E, D]{
+		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
 			mu.Lock()
 			transitions = append(transitions, stateSnap{from: e.From, to: e.To})
 			if len(transitions) >= rounds {
@@ -165,22 +165,22 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 func TestSortedActiveCacheParallel(t *testing.T) {
 	type S = string
 	type E = string
-	type C = cacheCtx
+	type D = cacheCtx
 
-	m := New[S, E, C]("cache-par").
+	m := New[S, E, D]("cache-par").
 		Initial("idle").
-		State("idle", func(s *StateBuilder[S, E, C]) {
+		State("idle", func(s *StateBuilder[S, E, D]) {
 			s.On("GO").GoTo("par")
 		}).
-		State("par", func(s *StateBuilder[S, E, C]) {
+		State("par", func(s *StateBuilder[S, E, D]) {
 			s.Type(Parallel)
 			s.On("BACK").GoTo("idle")
 			for r := 0; r < 3; r++ {
 				region := S(fmt.Sprintf("r%d", r))
 				child := S(fmt.Sprintf("r%d.a", r))
-				s.State(region, func(rs *StateBuilder[S, E, C]) {
+				s.State(region, func(rs *StateBuilder[S, E, D]) {
 					rs.Initial(child)
-					rs.State(child, func(_ *StateBuilder[S, E, C]) {})
+					rs.State(child, func(_ *StateBuilder[S, E, D]) {})
 				})
 			}
 		}).
@@ -190,8 +190,8 @@ func TestSortedActiveCacheParallel(t *testing.T) {
 	backToIdle := make(chan struct{})
 	count := 0
 
-	obs := ObserverFuncs[S, E, C]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, C]) {
+	obs := ObserverFuncs[S, E, D]{
+		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
 			count++
 			if count == 1 {
 				close(enteredPar)
@@ -236,24 +236,24 @@ func TestSortedActiveCacheParallel(t *testing.T) {
 func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 	type S = string
 	type E = string
-	type C = cacheCtx
+	type D = cacheCtx
 
 	// s0 --always--> s1 --always--> s2 --always--> terminal
-	m := New[S, E, C]("cache-always").
+	m := New[S, E, D]("cache-always").
 		Initial("start").
-		State("start", func(s *StateBuilder[S, E, C]) {
+		State("start", func(s *StateBuilder[S, E, D]) {
 			s.On("GO").GoTo("s0")
 		}).
-		State("s0", func(s *StateBuilder[S, E, C]) {
+		State("s0", func(s *StateBuilder[S, E, D]) {
 			s.Always().GoTo("s1")
 		}).
-		State("s1", func(s *StateBuilder[S, E, C]) {
+		State("s1", func(s *StateBuilder[S, E, D]) {
 			s.Always().GoTo("s2")
 		}).
-		State("s2", func(s *StateBuilder[S, E, C]) {
+		State("s2", func(s *StateBuilder[S, E, D]) {
 			s.Always().GoTo("terminal")
 		}).
-		State("terminal", func(s *StateBuilder[S, E, C]) {
+		State("terminal", func(s *StateBuilder[S, E, D]) {
 			s.On("RESET").GoTo("start")
 		}).
 		Build()
@@ -262,8 +262,8 @@ func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 	var mu sync.Mutex
 	var transitions []string
 
-	obs := ObserverFuncs[S, E, C]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, C]) {
+	obs := ObserverFuncs[S, E, D]{
+		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
 			mu.Lock()
 			transitions = append(transitions, e.To)
 			// GO produces: s0, s1, s2, terminal (4 transitions)
@@ -311,30 +311,30 @@ func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 func TestSortedActiveStatesDeterministicTieBreaker(t *testing.T) {
 	type S = string
 	type E = string
-	type C = cacheCtx
+	type D = cacheCtx
 
-	m := New[S, E, C]("tie-breaker").
+	m := New[S, E, D]("tie-breaker").
 		Initial("idle").
-		State("idle", func(s *StateBuilder[S, E, C]) {
+		State("idle", func(s *StateBuilder[S, E, D]) {
 			s.On("GO").GoTo("par")
 		}).
-		State("par", func(s *StateBuilder[S, E, C]) {
+		State("par", func(s *StateBuilder[S, E, D]) {
 			s.Type(Parallel)
 			// Add 10 parallel regions: r0 through r9
 			for r := 0; r < 10; r++ {
 				region := S(fmt.Sprintf("r%d", r))
 				child := S(fmt.Sprintf("r%d.child", r))
-				s.State(region, func(rs *StateBuilder[S, E, C]) {
+				s.State(region, func(rs *StateBuilder[S, E, D]) {
 					rs.Initial(child)
-					rs.State(child, func(_ *StateBuilder[S, E, C]) {})
+					rs.State(child, func(_ *StateBuilder[S, E, D]) {})
 				})
 			}
 		}).
 		Build()
 
 	enteredPar := make(chan struct{})
-	obs := ObserverFuncs[S, E, C]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, C]) {
+	obs := ObserverFuncs[S, E, D]{
+		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
 			if e.To == "par" {
 				close(enteredPar)
 			}

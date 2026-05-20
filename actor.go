@@ -34,9 +34,9 @@ var idGen = func() func() string {
 // Actor is the runtime interpreter for a statechart machine.
 // It maintains the current state, processes events sequentially,
 // and manages asynchronous services (invocations and timers).
-type Actor[S ~string, E ~string, C Cloner[C]] struct {
-	machine     *Machine[S, E, C]
-	context     C
+type Actor[S ~string, E ~string, D Cloner[D]] struct {
+	machine     *Machine[S, E, D]
+	context     D
 	active      map[S]bool
 	history     map[S]S
 	invocations map[S]context.CancelFunc
@@ -61,7 +61,7 @@ type Actor[S ~string, E ~string, C Cloner[C]] struct {
 	wg sync.WaitGroup
 
 	id       ActorID
-	observer Observer[S, E, C]
+	observer Observer[S, E, D]
 
 	// sortedActive caches the result of getSortedActiveStatesLocked.
 	// Nil means stale; rebuilt lazily on next call. Invalidated by
@@ -80,16 +80,16 @@ type envelope[E ~string] struct {
 // current context. It is used when building observer payloads so observers
 // cannot accidentally mutate the actor's live state through a payload's
 // Context pointer.
-func (a *Actor[S, E, C]) contextSnapshotPtr() *C {
+func (a *Actor[S, E, D]) contextSnapshotPtr() *D {
 	c := a.context.Clone()
 	return &c
 }
 
 // config holds the resolved configuration for an [Actor]. It is built by
 // applying [Option] values passed to [Start].
-type config[S ~string, E ~string, C Cloner[C]] struct {
+type config[S ~string, E ~string, D Cloner[D]] struct {
 	mailboxSize int
-	observer    Observer[S, E, C]
+	observer    Observer[S, E, D]
 	actorID     ActorID
 }
 
@@ -104,36 +104,36 @@ type config[S ~string, E ~string, C Cloner[C]] struct {
 //	    m.WithObserver(obs),
 //	    m.WithActorID("worker-42"),
 //	)
-type Option[S ~string, E ~string, C Cloner[C]] func(*config[S, E, C])
+type Option[S ~string, E ~string, D Cloner[D]] func(*config[S, E, D])
 
 // WithMailboxSize returns an [Option] that sets the buffered capacity of the
 // actor's event channel. When omitted, the default is 100. Values <= 0 fall
 // back to the default.
-func (m *Machine[S, E, C]) WithMailboxSize(n int) Option[S, E, C] {
-	return func(c *config[S, E, C]) { c.mailboxSize = n }
+func (m *Machine[S, E, D]) WithMailboxSize(n int) Option[S, E, D] {
+	return func(c *config[S, E, D]) { c.mailboxSize = n }
 }
 
 // WithObserver returns an [Option] that installs an [Observer] receiving
 // lifecycle callbacks for the actor. When omitted, a no-op observer is used.
 // The observer is invoked synchronously on the actor's event-processing
 // goroutine; see [Observer] for the full threading contract.
-func (m *Machine[S, E, C]) WithObserver(obs Observer[S, E, C]) Option[S, E, C] {
-	return func(c *config[S, E, C]) { c.observer = obs }
+func (m *Machine[S, E, D]) WithObserver(obs Observer[S, E, D]) Option[S, E, D] {
+	return func(c *config[S, E, D]) { c.observer = obs }
 }
 
 // WithActorID returns an [Option] that overrides the auto-generated [ActorID]
 // for the actor. When omitted, a fresh ID is generated with nanoid. Supplying
 // an empty string is treated as "no override".
-func (m *Machine[S, E, C]) WithActorID(id ActorID) Option[S, E, C] {
-	return func(c *config[S, E, C]) { c.actorID = id }
+func (m *Machine[S, E, D]) WithActorID(id ActorID) Option[S, E, D] {
+	return func(c *config[S, E, D]) { c.actorID = id }
 }
 
 // Start creates and launches a new [Actor] for the given machine. Options are
 // applied in order; later values for the same option win. The returned Actor
 // is already running and ready to receive events via [Actor.Send] or
 // [Actor.SendCtx].
-func Start[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], initialContext C, opts ...Option[S, E, C]) *Actor[S, E, C] {
-	cfg := config[S, E, C]{mailboxSize: defaultMailboxSize}
+func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialContext D, opts ...Option[S, E, D]) *Actor[S, E, D] {
+	cfg := config[S, E, D]{mailboxSize: defaultMailboxSize}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -141,13 +141,13 @@ func Start[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], initialContex
 		cfg.mailboxSize = defaultMailboxSize
 	}
 	if cfg.observer == nil {
-		cfg.observer = NopObserver[S, E, C]{}
+		cfg.observer = NopObserver[S, E, D]{}
 	}
 	if cfg.actorID == "" {
 		cfg.actorID = ActorID(idGen())
 	}
 
-	a := &Actor[S, E, C]{
+	a := &Actor[S, E, D]{
 		machine:     m,
 		context:     initialContext,
 		active:      make(map[S]bool),
@@ -193,8 +193,8 @@ func Start[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], initialContex
 //
 // The [ActorID] is resolved in priority order: [WithActorID] if supplied,
 // otherwise the ActorID stored in the snapshot.
-func Hydrate[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], snapshot Snapshot[S, C], opts ...Option[S, E, C]) *Actor[S, E, C] {
-	cfg := config[S, E, C]{mailboxSize: defaultMailboxSize}
+func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Snapshot[S, D], opts ...Option[S, E, D]) *Actor[S, E, D] {
+	cfg := config[S, E, D]{mailboxSize: defaultMailboxSize}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -202,7 +202,7 @@ func Hydrate[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], snapshot Sn
 		cfg.mailboxSize = defaultMailboxSize
 	}
 	if cfg.observer == nil {
-		cfg.observer = NopObserver[S, E, C]{}
+		cfg.observer = NopObserver[S, E, D]{}
 	}
 
 	active := make(map[S]bool)
@@ -224,7 +224,7 @@ func Hydrate[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], snapshot Sn
 		id = snapshot.ActorID
 	}
 
-	a := &Actor[S, E, C]{
+	a := &Actor[S, E, D]{
 		machine:     m,
 		context:     snapshot.Context,
 		active:      active,
@@ -261,7 +261,7 @@ func Hydrate[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], snapshot Sn
 //   - Atomic (non-Final): never done.
 //   - Compound: done iff its currently-active child is done.
 //   - Parallel: done iff every region is done.
-func (a *Actor[S, E, C]) isStateDoneLocked(sID S) bool {
+func (a *Actor[S, E, D]) isStateDoneLocked(sID S) bool {
 	sd := a.machine.States[sID]
 	if sd == nil {
 		return false
@@ -303,7 +303,7 @@ func (a *Actor[S, E, C]) isStateDoneLocked(sID S) bool {
 //
 // Must be called WITHOUT holding a.mu; it acquires RLock briefly to read
 // the active set.
-func (a *Actor[S, E, C]) maybeAutoStop() {
+func (a *Actor[S, E, D]) maybeAutoStop() {
 	a.mu.RLock()
 	var topLevel S
 	var found bool
@@ -360,7 +360,7 @@ func (a *Actor[S, E, C]) maybeAutoStop() {
 // Send after Stop is a no-op. [Actor.Send] and [Actor.SendCtx] called after
 // Stop (or concurrently with Stop past the shutdown-signal point) return
 // without delivering the event and without panicking.
-func (a *Actor[S, E, C]) Stop() {
+func (a *Actor[S, E, D]) Stop() {
 	a.stopOnce.Do(func() {
 		a.mu.Lock()
 		// Cancel all invocations
@@ -394,13 +394,13 @@ func (a *Actor[S, E, C]) Stop() {
 // (unless overridden with [WithActorID]) and is preserved across
 // [Actor.Snapshot] and [Hydrate] so telemetry can correlate the same logical
 // actor across persistence boundaries.
-func (a *Actor[S, E, C]) ID() ActorID {
+func (a *Actor[S, E, D]) ID() ActorID {
 	return a.id
 }
 
 // Context returns a thread-safe copy of the current context.
 // Thread safety is guaranteed by calling [Cloner.Clone] on the underlying context.
-func (a *Actor[S, E, C]) Context() C {
+func (a *Actor[S, E, D]) Context() D {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.context.Clone()
@@ -411,7 +411,7 @@ func (a *Actor[S, E, C]) Context() C {
 // is fired through OnInvokeStarted and is the parent of the cancellable
 // invokeCtx passed to invoke.Func, so any trace/span values on ctx propagate
 // to Func as well as to OnInvokeCompleted. Cancelling ctx cancels the invoke.
-func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
+func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 	stateDef := a.machine.States[id]
 	if stateDef == nil {
 		return
@@ -433,7 +433,7 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 		snap := a.context.Clone()
 		start := time.Now()
 
-		mutate := func(fn func(C) C) {
+		mutate := func(fn func(D) D) {
 			a.mu.Lock()
 			defer a.mu.Unlock()
 			select {
@@ -449,14 +449,14 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 			a.context = fn(a.context)
 		}
 
-		a.observer.OnInvokeStarted(ctx, InvokeEvent[S, E, C]{
+		a.observer.OnInvokeStarted(ctx, InvokeEvent[S, E, D]{
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
 			State:     id,
 			Timestamp: start,
 		})
 		a.wg.Add(1)
-		go func(sID S, invoke *InvokeDef[S, E, C], snap C, mutate func(func(C) C)) {
+		go func(sID S, invoke *InvokeDef[S, E, D], snap D, mutate func(func(D) D)) {
 			defer a.wg.Done()
 			err := invoke.Func(invokeCtx, snap, mutate)
 			completedAt := time.Now()
@@ -467,7 +467,7 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 			if reportedErr == nil && invokeCtx.Err() != nil {
 				reportedErr = invokeCtx.Err()
 			}
-			a.observer.OnInvokeCompleted(invokeCtx, InvokeEvent[S, E, C]{
+			a.observer.OnInvokeCompleted(invokeCtx, InvokeEvent[S, E, D]{
 				MachineID: a.machine.ID,
 				ActorID:   a.id,
 				State:     sID,
@@ -500,7 +500,7 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 
 // Snapshot captures the current status of the Actor, including its active states,
 // history data, and context. The returned struct is suitable for JSON serialization.
-func (a *Actor[S, E, C]) Snapshot() Snapshot[S, C] {
+func (a *Actor[S, E, D]) Snapshot() Snapshot[S, D] {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -516,7 +516,7 @@ func (a *Actor[S, E, C]) Snapshot() Snapshot[S, C] {
 
 	ctx := a.context.Clone()
 
-	return Snapshot[S, C]{
+	return Snapshot[S, D]{
 		Active:  active,
 		History: history,
 		Context: ctx,
@@ -525,13 +525,13 @@ func (a *Actor[S, E, C]) Snapshot() Snapshot[S, C] {
 }
 
 // enterState handles the full entry logic for a state, including its children.
-func (a *Actor[S, E, C]) enterState(ctx context.Context, id S) {
+func (a *Actor[S, E, D]) enterState(ctx context.Context, id S) {
 	a.enterSingleState(ctx, id)
 	a.enterChildrenWithHistory(ctx, id, false)
 }
 
 // States returns the current list of all active states, ordered from root to leaf.
-func (a *Actor[S, E, C]) States() []S {
+func (a *Actor[S, E, D]) States() []S {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -548,7 +548,7 @@ func (a *Actor[S, E, C]) States() []S {
 
 // State returns the ID of the current deepest active leaf state.
 // In the case of parallel states, it returns one of the active leaf states.
-func (a *Actor[S, E, C]) State() S {
+func (a *Actor[S, E, D]) State() S {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	active := a.getSortedActiveStatesLocked()
@@ -560,7 +560,7 @@ func (a *Actor[S, E, C]) State() S {
 
 // getSortedActiveStatesLocked retrieves active states sorted by depth (deepest first).
 // Must be called with at least a read lock.
-func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
+func (a *Actor[S, E, D]) getSortedActiveStatesLocked() []S {
 	if a.sortedActive != nil {
 		return a.sortedActive
 	}
@@ -606,7 +606,7 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 //
 // Callers that need to react to delivery failure should use [Actor.SendCtx]
 // directly.
-func (a *Actor[S, E, C]) Send(event E) {
+func (a *Actor[S, E, D]) Send(event E) {
 	_ = a.SendCtx(context.Background(), event)
 }
 
@@ -626,7 +626,7 @@ func (a *Actor[S, E, C]) Send(event E) {
 // Behaviour when the mailbox is full: SendCtx blocks until one of three
 // things happens — a slot opens, ctx is done, or the actor is stopped.
 // It never blocks forever.
-func (a *Actor[S, E, C]) SendCtx(ctx context.Context, event E) error {
+func (a *Actor[S, E, D]) SendCtx(ctx context.Context, event E) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -655,7 +655,7 @@ func (a *Actor[S, E, C]) SendCtx(ctx context.Context, event E) error {
 // when [Actor.Stop] closes a.stopped. The priority pre-check makes the exit
 // deterministic: once stopped is closed, the next iteration returns without
 // pulling any further buffered events from the mailbox.
-func (a *Actor[S, E, C]) loop() {
+func (a *Actor[S, E, D]) loop() {
 	defer a.wg.Done()
 	for {
 		// Priority: bail out if Stop has signalled shutdown, even if events
@@ -677,11 +677,11 @@ func (a *Actor[S, E, C]) loop() {
 	}
 }
 
-func (a *Actor[S, E, C]) handleEvent(ctx context.Context, event E) {
+func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.observer.OnEventReceived(ctx, EventNotice[S, E, C]{
+	a.observer.OnEventReceived(ctx, EventNotice[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		Event:     event,
@@ -701,7 +701,7 @@ func (a *Actor[S, E, C]) handleEvent(ctx context.Context, event E) {
 			for _, t := range transitions {
 				if t.Guard != nil {
 					ok := t.Guard(a.context)
-					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, C]{
+					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, D]{
 						MachineID: a.machine.ID,
 						ActorID:   a.id,
 						State:     sID,
@@ -724,7 +724,7 @@ func (a *Actor[S, E, C]) handleEvent(ctx context.Context, event E) {
 	}
 
 	// No transition fired for this event.
-	a.observer.OnEventDropped(ctx, EventNotice[S, E, C]{
+	a.observer.OnEventDropped(ctx, EventNotice[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		Event:     event,
@@ -737,12 +737,12 @@ func (a *Actor[S, E, C]) handleEvent(ctx context.Context, event E) {
 // entry/exit actions, and context updates. ctx is the request-scoped context
 // for the triggering event (or context.Background() for internal triggers).
 // event is the triggering event ID (zero value for Always/Delayed/Invoke).
-func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *TransitionDef[S, E, C], event E) {
+func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *TransitionDef[S, E, D], event E) {
 	// 1. Handle internal transitions (no target)
 	if t.Target == "" {
 		if t.Action != nil {
 			a.context = t.Action(a.context)
-			a.observer.OnActionExecuted(ctx, ActionEvent[S, E, C]{
+			a.observer.OnActionExecuted(ctx, ActionEvent[S, E, D]{
 				MachineID: a.machine.ID,
 				ActorID:   a.id,
 				State:     sourceID,
@@ -752,7 +752,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 				Timestamp: time.Now(),
 			})
 		}
-		a.observer.OnTransition(ctx, TransitionEvent[S, E, C]{
+		a.observer.OnTransition(ctx, TransitionEvent[S, E, D]{
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
 			From:      sourceID,
@@ -829,7 +829,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 		}
 		delete(a.active, sID)
 		a.sortedActive = nil // invalidate cache
-		a.observer.OnStateExited(ctx, StateEvent[S, E, C]{
+		a.observer.OnStateExited(ctx, StateEvent[S, E, D]{
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
 			State:     sID,
@@ -841,7 +841,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 	// 3. Execute transition action (Assign)
 	if t.Action != nil {
 		a.context = t.Action(a.context)
-		a.observer.OnActionExecuted(ctx, ActionEvent[S, E, C]{
+		a.observer.OnActionExecuted(ctx, ActionEvent[S, E, D]{
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
 			State:     sourceID,
@@ -877,7 +877,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 		}
 	}
 
-	a.observer.OnTransition(ctx, TransitionEvent[S, E, C]{
+	a.observer.OnTransition(ctx, TransitionEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		From:      sourceID,
@@ -890,7 +890,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 
 // enterSingleState marks a state as active, runs its entry actions, and
 // notifies the observer.
-func (a *Actor[S, E, C]) enterSingleState(ctx context.Context, id S) {
+func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 	a.active[id] = true
 	a.sortedActive = nil // invalidate cache
 	stateDef := a.machine.States[id]
@@ -902,7 +902,7 @@ func (a *Actor[S, E, C]) enterSingleState(ctx context.Context, id S) {
 		a.context = action(a.context)
 	}
 
-	a.observer.OnStateEntered(ctx, StateEvent[S, E, C]{
+	a.observer.OnStateEntered(ctx, StateEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		State:     id,
@@ -914,7 +914,7 @@ func (a *Actor[S, E, C]) enterSingleState(ctx context.Context, id S) {
 }
 
 // executeInternalTransition handles transitions triggered by services (invokes/timers).
-func (a *Actor[S, E, C]) executeInternalTransition(ctx context.Context, sourceID S, targetID S) {
+func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID S, targetID S) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -923,14 +923,14 @@ func (a *Actor[S, E, C]) executeInternalTransition(ctx context.Context, sourceID
 		return
 	}
 
-	t := &TransitionDef[S, E, C]{Target: targetID}
+	t := &TransitionDef[S, E, D]{Target: targetID}
 	var zero E
 	a.executeTransition(ctx, sourceID, t, zero)
 	a.handleAlwaysInternal(ctx)
 }
 
 // enterChildrenWithHistory resolves the child states to enter, respecting history and parallel types.
-func (a *Actor[S, E, C]) enterChildrenWithHistory(ctx context.Context, id S, deepHistory bool) {
+func (a *Actor[S, E, D]) enterChildrenWithHistory(ctx context.Context, id S, deepHistory bool) {
 	stateDef := a.machine.States[id]
 	if stateDef == nil {
 		return
@@ -961,7 +961,7 @@ func (a *Actor[S, E, C]) enterChildrenWithHistory(ctx context.Context, id S, dee
 }
 
 // isDescendant returns true if childID is a descendant of parentID.
-func (a *Actor[S, E, C]) isDescendant(childID, parentID S) bool {
+func (a *Actor[S, E, D]) isDescendant(childID, parentID S) bool {
 	if parentID == "" {
 		return true
 	}
@@ -984,7 +984,7 @@ func (a *Actor[S, E, C]) isDescendant(childID, parentID S) bool {
 // handleAlwaysInternal checks active states for Always transitions.
 // Must be called with a write lock.
 // It includes a circuit breaker to prevent infinite loops.
-func (a *Actor[S, E, C]) handleAlwaysInternal(ctx context.Context) {
+func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
 	const maxIterations = 100
 	iterations := 0
 	var zero E
@@ -1012,7 +1012,7 @@ func (a *Actor[S, E, C]) handleAlwaysInternal(ctx context.Context) {
 			for _, t := range stateDef.Always {
 				if t.Guard != nil {
 					ok := t.Guard(a.context)
-					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, C]{
+					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, D]{
 						MachineID: a.machine.ID,
 						ActorID:   a.id,
 						State:     sID,
