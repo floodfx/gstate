@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -541,22 +542,29 @@ func (a *Actor[S, E, C]) getSortedActiveStatesLocked() []S {
 	}
 
 	// Sort by depth descending (leaves first) using pre-computed depth.
-	for i := 0; i < len(res); i++ {
-		for j := i + 1; j < len(res); j++ {
-			dI := 0
-			dJ := 0
-			if sI, ok := a.machine.States[res[i]]; ok {
-				dI = sI.depth
-			}
-			if sJ, ok := a.machine.States[res[j]]; ok {
-				dJ = sJ.depth
-			}
-
-			if dI < dJ {
-				res[i], res[j] = res[j], res[i]
-			}
+	// Tie-break alphabetically DESCENDING on state ID so that when States()
+	// reverses the slice, equal-depth states are alphabetically ASCENDING.
+	slices.SortFunc(res, func(aStr, bStr S) int {
+		dI := 0
+		dJ := 0
+		if sI, ok := a.machine.States[aStr]; ok {
+			dI = sI.depth
 		}
-	}
+		if sJ, ok := a.machine.States[bStr]; ok {
+			dJ = sJ.depth
+		}
+
+		if dI != dJ {
+			return dJ - dI
+		}
+		if aStr < bStr {
+			return 1
+		}
+		if aStr > bStr {
+			return -1
+		}
+		return 0
+	})
 	a.sortedActive = res
 	return res
 }
