@@ -265,7 +265,7 @@ func (t *TransitionBuilder[S, E, D]) GuardLabel(name string) *TransitionBuilder[
 	return t
 }
 
-// Assign adds a context update action to the transition.
+// Assign adds a data update action to the transition.
 func (t *TransitionBuilder[S, E, D]) Assign(fn func(D) D) *TransitionBuilder[S, E, D] {
 	t.def.Action = fn
 	return t

@@ -2,13 +2,15 @@ package gstate
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 )
 
-// mutatingObserver attempts to mutate Context through every payload it sees.
-// If dataSnapshotPtr does its job, the actor's own context is unaffected.
+// mutatingObserver attempts to mutate Data through every payload it sees.
+// If dataSnapshotPtr does its job, the actor's own data is unaffected.
 type mutatingObserver struct {
 	NopObserver[StateID, EventID, Context]
 }
@@ -66,7 +68,7 @@ func TestObserverCannotMutateActorContext(t *testing.T) {
 
 	got := a.Data()
 	if got.Count != 2 {
-		t.Errorf("actor context Count = %d, want 2 (observer mutation must not leak through)", got.Count)
+		t.Errorf("actor data Count = %d, want 2 (observer mutation must not leak through)", got.Count)
 	}
 }
 
@@ -170,7 +172,7 @@ func TestSnapshotRacesInvokeWrites(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		snap := a.Snapshot()
 		if snap.Data == nil {
-			t.Fatal("Snapshot returned a nil context")
+			t.Fatal("Snapshot returned a nil data")
 		}
 		if snap.Data.Count < 0 {
 			t.Errorf("coherence check failed: snapshot Count is invalid: %d", snap.Data.Count)
@@ -212,7 +214,7 @@ func TestInvokeMutateAfterStateExit(t *testing.T) {
 
 	got := a.Data()
 	if got.Count == 9999 {
-		t.Errorf("actor context was mutated after state exit: got %v, want 42", got.Count)
+		t.Errorf("actor data was mutated after state exit: got %v, want 42", got.Count)
 	}
 	a.Stop()
 }
@@ -250,7 +252,7 @@ func TestInvokeMutateAfterStop(t *testing.T) {
 
 	got := a.Data()
 	if got.Count == 9999 {
-		t.Errorf("actor context was mutated after actor stop: got %v, want 42", got.Count)
+		t.Errorf("actor data was mutated after actor stop: got %v, want 42", got.Count)
 	}
 }
 
@@ -297,7 +299,7 @@ func TestInvokeReentryNewGeneration(t *testing.T) {
 
 	got := a.Data()
 	if got.Count == 9999 {
-		t.Errorf("actor context was mutated by obsolete generation: got %v, want 42", got.Count)
+		t.Errorf("actor data was mutated by obsolete generation: got %v, want 42", got.Count)
 	}
 	a.Stop()
 }
@@ -322,7 +324,7 @@ func TestInvokeSnapStability(t *testing.T) {
 					return c
 				})
 				if snap.Count != initialSnap {
-					t.Errorf("snap was aliased to live context: got %d, want %d", snap.Count, initialSnap)
+					t.Errorf("snap was aliased to live data: got %d, want %d", snap.Count, initialSnap)
 				}
 				close(done)
 				return nil
@@ -392,7 +394,47 @@ func TestInvokeParallelConcurrentMutate(t *testing.T) {
 
 	got := a.Data()
 	if got.Count != 100 {
-		t.Errorf("actor Context Count = %d, want 100 (concurrent writes must serialize correctly)", got.Count)
+		t.Errorf("actor Data Count = %d, want 100 (concurrent writes must serialize correctly)", got.Count)
+	}
+}
+
+func TestJSONWireFormat(t *testing.T) {
+	// 1. Serialization uses the new "data" key
+	snap := Snapshot[StateID, Context]{
+		Active:  []StateID{"a"},
+		History: map[StateID]StateID{},
+		Data:    Context{Count: 42},
+		ActorID: "my-actor",
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"data":{"Count":42}`) {
+		t.Errorf("expected new json tag 'data' in serialized output, got %s", s)
+	}
+	if strings.Contains(s, `"context"`) {
+		t.Errorf("expected no 'context' key in serialized output, got %s", s)
+	}
+
+	// 2. Deserializing new format works
+	var snap2 Snapshot[StateID, Context]
+	if err := json.Unmarshal(b, &snap2); err != nil {
+		t.Fatalf("json.Unmarshal new: %v", err)
+	}
+	if snap2.Data.Count != 42 {
+		t.Errorf("expected snap2.Data.Count to be 42, got %d", snap2.Data.Count)
+	}
+
+	// 3. Silent-Zero policy: Deserializing old format ("context" key) yields zero-value Data
+	oldJSON := `{"active":["a"],"history":{},"context":{"Count":42},"actor_id":"my-actor"}`
+	var snap3 Snapshot[StateID, Context]
+	if err := json.Unmarshal([]byte(oldJSON), &snap3); err != nil {
+		t.Fatalf("json.Unmarshal old: %v", err)
+	}
+	if snap3.Data.Count != 0 {
+		t.Errorf("Silent-Zero policy failed: expected snap3.Data.Count to be zero (ignored/unpopulated), got %d", snap3.Data.Count)
 	}
 }
 

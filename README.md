@@ -42,18 +42,18 @@ const (
 )
 
 // Define a simple context that implements the Cloner interface
-type MyContext struct{}
+type MyData struct{}
 
-func (c MyContext) Clone() MyContext {
-    return c
+func (d MyData) Clone() MyData {
+    return d
 }
 
-machine := gstate.New[MyState, MyEvent, MyContext]("toggle").
+machine := gstate.New[MyState, MyEvent, MyData]("toggle").
     Initial(StateOff).
-    State(StateOff, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+    State(StateOff, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
         s.On(EventToggle).GoTo(StateOn)
     }).
-    State(StateOn, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+    State(StateOn, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
         s.On(EventToggle).GoTo(StateOff)
     }).
     Build()
@@ -67,11 +67,11 @@ machine := gstate.New[MyState, MyEvent, MyContext]("toggle").
 
 One of the core strengths of `gstate` is its use of Go 1.18+ generics to provide strict type safety.
 
-The library uses three generic parameters: `[S ~string, E ~string, C Cloner[C]]`.
+The library uses three generic parameters: `[S ~string, E ~string, D Cloner[D]]`.
 
 - **`S` (State ID)**: By using a custom string type (e.g., `type MyState string`), you ensure that `Initial()`, `State()`, and `GoTo()` only accept valid state identifiers.
 - **`E` (Event ID)**: Similarly, `On(event)` only accepts events of your specific type.
-- **`C` (Context)**: The data your machine holds is strictly typed, and MUST satisfy the `gstate.Cloner[C]` constraint. Actions and guards receive this exact type, eliminating the need for dynamic casting and guaranteeing thread-safe reads/writes during actor execution.
+- **`D` (Data)**: The data your machine holds is strictly typed, and MUST satisfy the `gstate.Cloner[D]` constraint. Actions and guards receive this exact type, eliminating the need for dynamic casting and guaranteeing thread-safe reads/writes during actor execution.
 
 **Benefits:**
 - **No Typos**: Compilers will catch `actor.Send("TYPO")` if your event type is strictly defined.
@@ -80,47 +80,47 @@ The library uses three generic parameters: `[S ~string, E ~string, C Cloner[C]]`
 
 ---
 
-## 3. Managing Data with Context (`Assign`)
+## 3. Managing State Data (`Assign`)
 
-Statecharts aren't just about labels; they often need to hold data. In `gstate`, this is called **Context**.
+Statecharts aren't just about labels; they often need to hold data. In `gstate`, this is called **Data**.
 
-Transitions can perform **Actions** to update this data. In Go, these are pure functions: `func(C) C`.
+Transitions can perform **Actions** to update this data. In Go, these are pure functions: `func(D) D`.
 
 ```go
-type CounterCtx struct {
+type CounterData struct {
     Count int
 }
 
 s.On("INCREMENT").
-    Assign(func(c CounterCtx) CounterCtx {
-        c.Count++
-        return c
+    Assign(func(d CounterData) CounterData {
+        d.Count++
+        return d
     })
 ```
 
 #### Thread Safety via `Cloner` Constraint
 
-To guarantee thread-safe read/write isolation when snapshotting or observing a running Actor, the Context type `C` must satisfy the `Cloner[C]` constraint.
+To guarantee thread-safe read/write isolation when snapshotting or observing a running Actor, the Data type `D` must satisfy the `Cloner[D]` constraint.
 
 If your Context consists solely of value types (like `struct{ Count int }`), implementing `Clone()` is as simple as returning `c`:
 
 ```go
-func (c MyCtx) Clone() MyCtx {
-    return c
+func (d MyData) Clone() MyData {
+    return d
 }
 ```
 
 If your Context contains reference types (pointers, slices, maps), you must perform a deep copy inside `Clone()` to ensure true isolation:
 
 ```go
-type MyCtx struct {
+type MyData struct {
     Data []int
 }
 
-func (c MyCtx) Clone() MyCtx {
+func (d MyData) Clone() MyData {
     newData := make([]int, len(c.Data))
     copy(newData, c.Data)
-    return MyCtx{Data: newData}
+    return MyData{Data: newData}
 }
 ```
 
@@ -131,15 +131,15 @@ func (c MyCtx) Clone() MyCtx {
 States can define actions that run whenever they are entered or exited. This is useful for setup/teardown, logging, or any side effect tied to a state's lifecycle.
 
 ```go
-s.State(StateActive, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-    s.Entry(func(c MyContext) MyContext {
+s.State(StateActive, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+    s.Entry(func(d MyData) MyData {
         fmt.Println("[active] Entering state...")
-        return c
+        return d
     })
 
-    s.Exit(func(c MyContext) MyContext {
+    s.Exit(func(d MyData) MyData {
         fmt.Println("[active] Leaving state...")
-        return c
+        return d
     })
 
     s.On(EventStop).GoTo(StateIdle)
@@ -168,14 +168,14 @@ In a complex system, some states are "sub-modes" of others. For example, a `User
 - **Common Actions**: Define an `Entry` action on a parent that runs regardless of which child is entered.
 
 ```go
-s.State("parent", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+s.State("parent", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
     s.Initial("childA")
     
     // If ANY child receives "RESET", we go to "parent.childA"
     s.On("RESET").GoTo("childA")
 
-    s.State("childA", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) { ... })
-    s.State("childB", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) { ... })
+    s.State("childA", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) { ... })
+    s.State("childB", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) { ... })
 })
 ```
 
@@ -192,22 +192,22 @@ Two history types are available:
 - **`gstate.Deep`**: Remembers all active descendants in the hierarchy.
 
 ```go
-machine := gstate.New[MyState, MyEvent, MyContext]("history_demo").
+machine := gstate.New[MyState, MyEvent, MyData]("history_demo").
     Initial("app").
-    State("app", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+    State("app", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
         s.History(gstate.Shallow)
         s.Initial("screen1")
 
-        s.State("screen1", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+        s.State("screen1", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
             s.On("SWITCH").GoTo("screen2")
         })
-        s.State("screen2", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+        s.State("screen2", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
             s.On("SWITCH").GoTo("screen1")
         })
 
         s.On("GO_IDLE").GoTo("idle")
     }).
-    State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+    State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
         s.On("WAKE").GoTo("app")
     }).
     Build()
@@ -226,25 +226,25 @@ Sometimes a system is in multiple modes at once. A text editor might be `Focused
 Parallel states allow you to define regions that operate independently. Use `actor.States()` to see all active states.
 
 ```go
-s.State("active", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+s.State("active", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
     s.Type(gstate.Parallel)
 
-    s.State("keyboard", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+    s.State("keyboard", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
         s.Initial("caps_off")
-        s.State("caps_off", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+        s.State("caps_off", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
             s.On("CAPS_LOCK").GoTo("caps_on")
         })
-        s.State("caps_on", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+        s.State("caps_on", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
             s.On("CAPS_LOCK").GoTo("caps_off")
         })
     })
 
-    s.State("mouse", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+    s.State("mouse", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
         s.Initial("not_clicked")
-        s.State("not_clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+        s.State("not_clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
             s.On("CLICK").GoTo("clicked")
         })
-        s.State("clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+        s.State("clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
             s.On("RELEASE").GoTo("not_clicked")
         })
     })
@@ -267,18 +267,18 @@ Used for asynchronous work (like an API call). The service starts when you enter
 To prevent data races between concurrent transitions and background goroutines, **mutations from inside an Invoke must go through the provided `mutate` callback**:
 
 ```go
-s.Invoke(func(ctx context.Context, snap MyCtx, mutate func(func(MyCtx) MyCtx)) error {
-    // Use `snap` to read the state context at entry.
-    // Use the thread-safe `mutate` callback to safely update context.
-    mutate(func(c MyCtx) MyCtx {
-        c.Data = "updated"
-        return c
+s.Invoke(func(ctx context.Context, snap MyData, mutate func(func(MyData) MyData)) error {
+    // Use `snap` to read the state data at entry.
+    // Use the thread-safe `mutate` callback to safely update data.
+    mutate(func(d MyData) MyData {
+        d.Value = "updated"
+        return d
     })
     return doExpensiveWork(ctx)
 }, "onSuccessState", "onErrorState")
 ```
 
-The `mutate` callback accepts a function that receives the current context and returns the updated context. This update runs under the actor's internal write lock, ensuring complete race-free synchronization. If the state is exited or the actor stops before the callback runs, the mutation is safely ignored (no-op'd) to prevent stale/obsolete writes.
+The `mutate` callback accepts a function that receives the current data and returns the updated data. This update runs under the actor's internal write lock, ensuring complete race-free synchronization. If the state is exited or the actor stops before the callback runs, the mutation is safely ignored (no-op'd) to prevent stale/obsolete writes.
 
 Optional `InvokeLabel(name)` names the invocation for Mermaid output. When both success and error targets are set, the labeled invoke renders as a diamond pseudo-state with `invoke.done` and `invoke.error` outgoing arrows — see [§Mermaid Diagrams](#mermaid-diagrams).
 
@@ -291,7 +291,7 @@ s.InvokeLabel("call_llm")
 Transitions that happen automatically after a duration.
 
 ```go
-s.State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+s.State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
     // If we are stuck here for 5 seconds, move to "error"
     s.After(5 * time.Second).GoTo("error")
 })
@@ -306,9 +306,9 @@ s.State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 `Always` transitions fire immediately if their **Guard** (a condition function) is met. They don't wait for an external event. This is useful for "decider" states.
 
 ```go
-s.State("check_balance", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+s.State("check_balance", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
     s.Always().
-        Guard(func(c MyCtx) bool { return c.Balance > 100 }).
+        Guard(func(d MyData) bool { return d.Balance > 100 }).
         GoTo("premium_user")
     
     s.Always().GoTo("regular_user") // Fallback
@@ -322,7 +322,7 @@ s.State("check_balance", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext
 A `Final` state indicates the completion of its parent's process. Once entered, no further transitions are processed from that state.
 
 ```go
-s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
     s.Type(gstate.Final)
 })
 ```
@@ -370,13 +370,13 @@ machine := gstate.New[MyState, MyEvent, any]("invalid_target").
 When you want to record transitions, guard outcomes, state entries/exits, transition actions, and invoked services — for telemetry, tracing, audit logs, or just to debug what your machine is doing — you do **not** need to wrap every `Entry`, `Exit`, `Guard`, and `Invoke` by hand. Pass an `Observer` to `Start`:
 
 ```go
-obs := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
-actor := gstate.Start(machine, MyContext{}, machine.WithObserver(obs))
+obs := &gstate.RecordingObserver[MyState, MyEvent, MyData]{}
+actor := gstate.Start(machine, MyData{}, machine.WithObserver(obs))
 ```
 
-> The `machine.WithObserver(obs)` form lets Go infer the `[MyState, MyEvent, MyContext]` type parameters from `machine`, so you don't have to repeat them on every option. The package-level `gstate.WithObserver[S, E, C](obs)` form still works if you prefer.
+> The `machine.WithObserver(obs)` form lets Go infer the `[MyState, MyEvent, MyData]` type parameters from `machine`, so you don't have to repeat them on every option. The package-level `gstate.WithObserver[S, E, D](obs)` form still works if you prefer.
 
-The nine hooks on `Observer[S, E, C]`:
+The nine hooks on `Observer[S, E, D]`:
 
 | Hook | Fires when |
 |---|---|
@@ -400,19 +400,19 @@ The nine hooks on `Observer[S, E, C]`:
       go func() { actor.Send(EventX) }()
   }
   ```
-- The `Context *C` field on each payload points to a **defensive copy** of the actor's context taken at the moment the hook fires. Reading is safe and accurately reflects state at that point; mutating the pointee has no effect on the actor. If `C` implements `Cloner`, that deep copy is used.
+- The `Data *D` field on each payload points to a **defensive copy** of the actor's data taken at the moment the hook fires. Reading is safe and accurately reflects state at that point; mutating the pointee has no effect on the actor. If `D` implements `Cloner`, that deep copy is used.
 - `OnInvokeCompleted` fires from the invoke goroutine and does not hold the actor lock.
 
 ### Implementing only the methods you care about (`NopObserver`)
 
-Embed `NopObserver[S, E, C]` to satisfy the interface with no-ops, then override what you want:
+Embed `NopObserver[S, E, D]` to satisfy the interface with no-ops, then override what you want:
 
 ```go
 type loggingObs struct {
-    gstate.NopObserver[MyState, MyEvent, MyContext]
+    gstate.NopObserver[MyState, MyEvent, MyData]
 }
 
-func (l *loggingObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) {
+func (l *loggingObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyData]) {
     log.Printf("[%s] %s --%s--> %s", e.ActorID, e.From, e.Event, e.To)
 }
 ```
@@ -421,7 +421,7 @@ func (l *loggingObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[
 
 ```go
 ready := make(chan struct{}, 1)
-obs := gstate.SignalObserver[MyState, MyEvent, MyContext](func() {
+obs := gstate.SignalObserver[MyState, MyEvent, MyData](func() {
     select { case ready <- struct{}{}: default: }
 })
 actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
@@ -434,11 +434,11 @@ Every callback on `SignalObserver` calls the supplied function. The callback's c
 ### Avoid `NopObserver` boilerplate with `ObserverFuncs`
 
 ```go
-obs := gstate.ObserverFuncs[MyState, MyEvent, MyContext]{
+obs := gstate.ObserverFuncs[MyState, MyEvent, MyData]{
     AnyFunc: func(ctx context.Context) {
         // fires for every callback
     },
-    TransitionFunc: func(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) {
+    TransitionFunc: func(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyData]) {
         log.Printf("[%s] %s --%s--> %s", e.ActorID, e.From, e.Event, e.To)
     },
 }
@@ -449,11 +449,11 @@ actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
 
 ### Inspecting behavior with `RecordingObserver`
 
-`RecordingObserver[S, E, C]` captures every callback into a thread-safe log. It is useful in tests and for ad-hoc debugging:
+`RecordingObserver[S, E, D]` captures every callback into a thread-safe log. It is useful in tests and for ad-hoc debugging:
 
 ```go
-rec := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
-actor := gstate.Start(machine, MyContext{}, machine.WithObserver(rec))
+rec := &gstate.RecordingObserver[MyState, MyEvent, MyData]{}
+actor := gstate.Start(machine, MyData{}, machine.WithObserver(rec))
 actor.Send(EventGo)
 
 for _, t := range rec.Transitions() {
@@ -498,11 +498,11 @@ A `Machine` is a static blueprint. To actually run it, you create an **Actor**. 
 
 ```go
 // Start with default options
-actor := gstate.Start(machine, MyContext{Count: 0})
+actor := gstate.Start(machine, MyData{Count: 0})
 
 // Or with one or more functional options — call them as methods on the
-// machine to let Go infer the [S, E, C] type parameters.
-actor := gstate.Start(machine, MyContext{Count: 0},
+// machine to let Go infer the [S, E, D] type parameters.
+actor := gstate.Start(machine, MyData{Count: 0},
     machine.WithMailboxSize(500),
     machine.WithObserver(myObs),
     machine.WithActorID("worker-42"),
@@ -515,14 +515,14 @@ Available options:
 - `WithObserver(obs)` — install an [`Observer`](#12-observing-lifecycle-events). Default is a no-op.
 - `WithActorID(id)` — override the auto-generated [`ActorID`](#actor-identity).
 
-Each option is available both as a method on `*Machine[S, E, C]` (inference-friendly, recommended) and as a package-level generic helper (e.g. `gstate.WithObserver[S, E, C](obs)`).
+Each option is available both as a method on `*Machine[S, E, D]` (inference-friendly, recommended) and as a package-level generic helper (e.g. `gstate.WithObserver[S, E, D](obs)`).
 
 ### Actor Identity
 
 Every actor is born with a stable `ActorID`. When you don't supply one via `WithActorID`, `Start` generates a short URL-safe nanoid:
 
 ```go
-actor := gstate.Start(machine, MyContext{})
+actor := gstate.Start(machine, MyData{})
 fmt.Println(actor.ID()) // e.g. "V1StGXR8_Z5j"
 ```
 
@@ -568,7 +568,7 @@ state := actor.State()
 states := actor.States()
 
 // Get a thread-safe copy of the context data
-ctx := actor.Context()
+ctx := actor.Data()
 
 // Get a full snapshot (active states, history, and context)
 snap := actor.Snapshot()
@@ -633,7 +633,7 @@ snapshot := actor.Snapshot()
 data, _ := json.MarshalIndent(snapshot, "", "  ")
 
 // 3. Later, deserialize and restore
-var loaded gstate.Snapshot[MyState, MyContext]
+var loaded gstate.Snapshot[MyState, MyData]
 json.Unmarshal(data, &loaded)
 
 actor2 := gstate.Hydrate(machine, loaded)
@@ -653,7 +653,7 @@ A `Snapshot` contains:
 `Hydrate` accepts the same functional options as `Start`, so you can attach an observer or tune the mailbox on a restored actor:
 
 ```go
-rec := &gstate.RecordingObserver[MyState, MyEvent, MyContext]{}
+rec := &gstate.RecordingObserver[MyState, MyEvent, MyData]{}
 actor := gstate.Hydrate(machine, loaded,
     machine.WithObserver(rec),
     machine.WithMailboxSize(500),
@@ -764,7 +764,7 @@ Also available:
 `gstate` uses a hybrid concurrency model to ensure safety and performance:
 
 - **Sequential Mailbox (Channels)**: All events sent via `actor.Send(event)` are queued. A background goroutine processes them one by one, ensuring that state transitions and context updates are **strictly sequential**.
-- **Thread-Safe Access (RWMutex)**: Methods like `actor.State()`, `actor.States()`, `actor.Context()`, and `actor.Snapshot()` are safe to call concurrently. They use a read-lock to provide a consistent view of the actor.
+- **Thread-Safe Access (RWMutex)**: Methods like `actor.State()`, `actor.States()`, `actor.Data()`, and `actor.Snapshot()` are safe to call concurrently. They use a read-lock to provide a consistent view of the actor.
 - **Asynchronous Integrity**: `Invoke` and `After` run in separate goroutines but their results are funneled back through the sequential logic to prevent data races on your Context.
 
 ---

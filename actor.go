@@ -77,9 +77,9 @@ type envelope[E ~string] struct {
 }
 
 // dataSnapshotPtr returns a pointer to a defensive copy of the actor's
-// current context. It is used when building observer payloads so observers
+// current data. It is used when building observer payloads so observers
 // cannot accidentally mutate the actor's live state through a payload's
-// Context pointer.
+// Data pointer.
 func (a *Actor[S, E, D]) dataSnapshotPtr() *D {
 	c := a.data.Clone()
 	return &c
