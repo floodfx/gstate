@@ -305,7 +305,41 @@ s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 
 ---
 
-## 11. Observing Lifecycle Events
+## 11. Build-Time Static Validation
+
+To prevent silent runtime errors (such as transitions to non-existent states due to typos), `gstate` performs static-analysis validation at build time when you call `Build()`. 
+
+If a machine definition violates any structural rules, `Build()` will fail-fast by **panicking** with a clear, descriptive message prefixed with `gstate:`.
+
+### Validation Rules
+1. **Initial States**:
+   - The top-level machine `Initial(state)` reference must point to a valid, declared state.
+   - For any compound state, its `Initial(state)` reference must point to a valid child state declared within that compound parent.
+2. **Transition Targets**:
+   - Any target specified in a `.GoTo(state)` transition (for standard event transitions, `Always` transitions, and `After` delayed transitions) must point to a valid, declared state (targetless / internal transitions are allowed).
+3. **Invoke Targets**:
+   - The `onDone` and `onError` targets specified in `s.Invoke(handler, onDone, onError)` must point to valid, declared states.
+
+### Example Validation Failures
+
+```go
+// Panics: "gstate: initial state 'invalid_state' not found in machine"
+machine := gstate.New[MyState, MyEvent, any]("invalid_initial").
+    Initial("invalid_state").
+    Build()
+
+// Panics: "gstate: transition target 'typo_state' in state 'idle' not found in machine"
+machine := gstate.New[MyState, MyEvent, any]("invalid_target").
+    Initial("idle").
+    State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, any]) {
+        s.On("START").GoTo("typo_state")
+    }).
+    Build()
+```
+
+---
+
+## 12. Observing Lifecycle Events
 
 When you want to record transitions, guard outcomes, state entries/exits, transition actions, and invoked services — for telemetry, tracing, audit logs, or just to debug what your machine is doing — you do **not** need to wrap every `Entry`, `Exit`, `Guard`, and `Invoke` by hand. Pass an `Observer` to `Start`:
 
@@ -452,7 +486,7 @@ actor := gstate.Start(machine, MyContext{Count: 0},
 Available options:
 
 - `WithMailboxSize(n)` — buffered capacity for the event channel. Default `100`.
-- `WithObserver(obs)` — install an [`Observer`](#11-observing-lifecycle-events). Default is a no-op.
+- `WithObserver(obs)` — install an [`Observer`](#12-observing-lifecycle-events). Default is a no-op.
 - `WithActorID(id)` — override the auto-generated [`ActorID`](#actor-identity).
 
 Each option is available both as a method on `*Machine[S, E, C]` (inference-friendly, recommended) and as a package-level generic helper (e.g. `gstate.WithObserver[S, E, C](obs)`).

@@ -3,6 +3,7 @@ package gstate
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -108,6 +109,22 @@ func FuzzBuilder(f *testing.F) {
 
 	pool := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
 	f.Fuzz(func(t *testing.T, data []byte) {
+		defer func() {
+			if r := recover(); r != nil {
+				var errStr string
+				switch v := r.(type) {
+				case error:
+					errStr = v.Error()
+				case string:
+					errStr = v
+				default:
+					panic(r)
+				}
+				if !strings.HasPrefix(errStr, "gstate:") {
+					panic(r) // re-panic unexpected failures
+				}
+			}
+		}()
 		if len(data) < 4 {
 			return
 		}
