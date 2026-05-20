@@ -67,13 +67,13 @@ func main() {
 	// gstate.Hydrate creates a new Actor in exactly the same state.
 	actor2 := gstate.Hydrate(machine, loadedSnapshot)
 	fmt.Printf("Hydrated State: %s\n", actor2.State())
-	fmt.Printf("Hydrated Context: %s\n", actor2.Snapshot().Data.Value)
+	fmt.Printf("Hydrated Data: %s\n", actor2.Snapshot().Data.Value)
 
 	fmt.Println("\n--- Step 3: Continue Workflow from Hydrated Actor ---")
 	actor2.Send("FINISH")
 	time.Sleep(10 * time.Millisecond)
 	fmt.Printf("Final State: %s\n", actor2.State())
-	fmt.Printf("Final Context: %s\n", actor2.Snapshot().Data.Value)
+	fmt.Printf("Final Data: %s\n", actor2.Snapshot().Data.Value)
 
 	fmt.Println("\n--- Conclusion ---")
 	fmt.Println("Persistence allows you to decouple the machine execution from")

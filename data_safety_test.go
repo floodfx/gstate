@@ -41,7 +41,7 @@ func (mutatingObserver) OnActionExecuted(_ context.Context, e ActionEvent[StateI
 	}
 }
 
-func TestObserverCannotMutateActorContext(t *testing.T) {
+func TestObserverCannotMutateActorData(t *testing.T) {
 	// Machine that increments Count by 1 on GO.
 	m := New[StateID, EventID, Context]("ctx-safety").
 		Initial("a").

@@ -499,7 +499,7 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 }
 
 // Snapshot captures the current status of the Actor, including its active states,
-// history data, and context. The returned struct is suitable for JSON serialization.
+// history data, and data. The returned struct is suitable for JSON serialization.
 func (a *Actor[S, E, D]) Snapshot() Snapshot[S, D] {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -734,7 +734,7 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 }
 
 // executeTransition performs the state transition logic, including LCA resolution,
-// entry/exit actions, and context updates. ctx is the request-scoped context
+// entry/exit actions, and data updates. ctx is the request-scoped context
 // for the triggering event (or context.Background() for internal triggers).
 // event is the triggering event ID (zero value for Always/Delayed/Invoke).
 func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *TransitionDef[S, E, D], event E) {

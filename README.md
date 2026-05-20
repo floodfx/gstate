@@ -567,10 +567,10 @@ state := actor.State()
 // Get ALL active states (useful for parallel states)
 states := actor.States()
 
-// Get a thread-safe copy of the context data
-ctx := actor.Data()
+// Get a thread-safe copy of the actor's data
+data := actor.Data()
 
-// Get a full snapshot (active states, history, and context)
+// Get a full snapshot (active states, history, and data)
 snap := actor.Snapshot()
 ```
 
@@ -643,7 +643,7 @@ actor2 := gstate.Hydrate(machine, loaded)
 A `Snapshot` contains:
 - **`Active []S`** — all currently active states
 - **`History map[S]S`** — the history map (parent → remembered child)
-- **`Context C`** — the context data
+- **`Data D`** — the user data
 - **`ActorID ActorID`** — the producing actor's stable identifier
 
 `Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID` from the snapshot.
