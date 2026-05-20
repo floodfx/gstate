@@ -35,10 +35,10 @@ import (
 //     (e.g. `go func() { actor.Send(EventX) }()`).
 //   - OnInvokeCompleted fires from the invoke goroutine and does not hold the
 //     actor lock.
-//   - Payload pointer fields (Context *C) reference a defensive copy of the
-//     actor's context taken at the moment the hook fires. Reading is safe and
+//   - Payload pointer fields (Data *D) reference a defensive copy of the
+//     actor's data taken at the moment the hook fires. Reading is safe and
 //     accurately reflects state at that point; mutations on the pointee do
-//     not affect the actor. If C implements [Cloner], that deep copy is used.
+//     not affect the actor. The deep copy is obtained via Cloner.Clone().
 //
 // To implement only a subset of the methods, embed [NopObserver].
 type Observer[S ~string, E ~string, D Cloner[D]] interface {
@@ -291,7 +291,7 @@ func (m MultiObserver[S, E, D]) OnEventDropped(ctx context.Context, e EventNotic
 // Typical use: waking a channel when any lifecycle activity occurs.
 //
 //	ready := make(chan struct{}, 1)
-//	obs := gstate.SignalObserver[MyState, MyEvent, MyContext](func() {
+//	obs := gstate.SignalObserver[MyState, MyEvent, MyData](func() {
 //	    select { case ready <- struct{}{}: default: }
 //	})
 //	actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
@@ -345,9 +345,9 @@ func (o signalObserver[S, E, D]) OnEventDropped(context.Context, EventNotice[S, 
 // AnyFunc (if non-nil), then to the kind-specific field (if non-nil);
 // nil fields are no-ops.
 //
-//	obs := gstate.ObserverFuncs[MyState, MyEvent, MyContext]{
+//	obs := gstate.ObserverFuncs[MyState, MyEvent, MyData]{
 //	    AnyFunc:        func(ctx context.Context) { /* ... */ },
-//	    TransitionFunc: func(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) { /* ... */ },
+//	    TransitionFunc: func(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyData]) { /* ... */ },
 //	}
 //	actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
 //
@@ -438,9 +438,9 @@ func (o ObserverFuncs[S, E, D]) OnEventDropped(ctx context.Context, e EventNotic
 // Embed it to implement only the callbacks you care about:
 //
 //	type myObs struct {
-//	    gstate.NopObserver[MyState, MyEvent, MyContext]
+//	    gstate.NopObserver[MyState, MyEvent, MyData]
 //	}
-//	func (o *myObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) {
+//	func (o *myObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyData]) {
 //	    // ...
 //	}
 type NopObserver[S ~string, E ~string, D Cloner[D]] struct{}

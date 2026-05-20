@@ -9,9 +9,9 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext struct{}
+type MyData struct{}
 
-func (c MyContext) Clone() MyContext {
+func (c MyData) Clone() MyData {
 	return c
 }
 
@@ -19,31 +19,31 @@ func main() {
 	// 1. Parallel States allow a machine to be in multiple states simultaneously.
 	// This is useful for systems with orthogonal (independent) logic.
 	// In this example, a computer's Input system tracks Keyboard and Mouse states independently.
-	machine := gstate.New[MyState, MyEvent, MyContext]("input_system").
+	machine := gstate.New[MyState, MyEvent, MyData]("input_system").
 		Initial("active").
-		State("active", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("active", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			// Set the type to Parallel. This means ALL immediate children will be active.
 			s.Type(gstate.Parallel)
 
 			// 2. Define the 'keyboard' region.
-			s.State("keyboard", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+			s.State("keyboard", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 				s.Initial("caps_off")
-				s.State("caps_off", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+				s.State("caps_off", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 					s.On("CAPS_LOCK").GoTo("caps_on")
 				})
-				s.State("caps_on", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+				s.State("caps_on", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 					s.On("CAPS_LOCK").GoTo("caps_off")
 				})
 			})
 
 			// 3. Define the 'mouse' region.
 			// Transitions here do NOT affect the keyboard region.
-			s.State("mouse", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+			s.State("mouse", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 				s.Initial("not_clicked")
-				s.State("not_clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+				s.State("not_clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 					s.On("CLICK").GoTo("clicked")
 				})
-				s.State("clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+				s.State("clicked", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 					s.On("RELEASE").GoTo("not_clicked")
 				})
 			})
@@ -51,7 +51,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Parallel Actor ---")
-	actor := gstate.Start(machine, MyContext{})
+	actor := gstate.Start(machine, MyData{})
 
 	// Notice that we are in multiple leaf states at once.
 	fmt.Printf("Active States: %v\n", actor.States())

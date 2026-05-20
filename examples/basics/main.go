@@ -24,22 +24,22 @@ const (
 	EventStop      MyEvent = "STOP"
 )
 
-// MyContext is the data held by the state machine.
-type MyContext struct {
+// MyData is the data held by the state machine.
+type MyData struct {
 	Count int
 }
 
-func (c MyContext) Clone() MyContext {
+func (c MyData) Clone() MyData {
 	return c
 }
 
 func main() {
 	// 3. Build the Machine using the defined constants.
-	machine := gstate.New[MyState, MyEvent, MyContext]("counter").
+	machine := gstate.New[MyState, MyEvent, MyData]("counter").
 		Initial(StateIdle).
-		State(StateIdle, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State(StateIdle, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.On(EventIncrement).
-				Assign(func(c MyContext) MyContext {
+				Assign(func(c MyData) MyData {
 					c.Count++
 					fmt.Printf("[idle] Incremented count to: %d\n", c.Count)
 					return c
@@ -47,13 +47,13 @@ func main() {
 
 			s.On(EventStart).GoTo(StateActive)
 		}).
-		State(StateActive, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-			s.Entry(func(c MyContext) MyContext {
+		State(StateActive, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+			s.Entry(func(c MyData) MyData {
 				fmt.Println("[active] Entering state...")
 				return c
 			})
 
-			s.Exit(func(c MyContext) MyContext {
+			s.Exit(func(c MyData) MyData {
 				fmt.Println("[active] Leaving state...")
 				return c
 			})
@@ -63,7 +63,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Actor ---")
-	actor := gstate.Start(machine, MyContext{Count: 0})
+	actor := gstate.Start(machine, MyData{Count: 0})
 
 	// 4. Send Events using constants
 	actor.Send(EventIncrement)

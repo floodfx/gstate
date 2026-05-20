@@ -22,11 +22,11 @@ const (
 	EventStart Event = "START"
 )
 
-type Context struct {
+type Data struct {
 	Attempts int
 }
 
-func (c Context) Clone() Context {
+func (c Data) Clone() Data {
 	return c
 }
 
@@ -34,18 +34,18 @@ func (c Context) Clone() Context {
 // to surface in stdout. It is a typical shape: small, focused, free to ignore
 // most callbacks.
 type loggingObserver struct {
-	gstate.NopObserver[State, Event, Context]
+	gstate.NopObserver[State, Event, Data]
 }
 
-func (o *loggingObserver) OnTransition(_ context.Context, e gstate.TransitionEvent[State, Event, Context]) {
+func (o *loggingObserver) OnTransition(_ context.Context, e gstate.TransitionEvent[State, Event, Data]) {
 	fmt.Printf("[%s] %s --%s--> %s\n", e.ActorID, e.From, e.Event, e.To)
 }
 
-func (o *loggingObserver) OnInvokeStarted(_ context.Context, e gstate.InvokeEvent[State, Event, Context]) {
+func (o *loggingObserver) OnInvokeStarted(_ context.Context, e gstate.InvokeEvent[State, Event, Data]) {
 	fmt.Printf("[%s] invoke started in %s\n", e.ActorID, e.State)
 }
 
-func (o *loggingObserver) OnInvokeCompleted(_ context.Context, e gstate.InvokeEvent[State, Event, Context]) {
+func (o *loggingObserver) OnInvokeCompleted(_ context.Context, e gstate.InvokeEvent[State, Event, Data]) {
 	if e.Error != nil {
 		fmt.Printf("[%s] invoke in %s completed with error after %v: %v\n", e.ActorID, e.State, e.Duration, e.Error)
 		return
@@ -54,28 +54,28 @@ func (o *loggingObserver) OnInvokeCompleted(_ context.Context, e gstate.InvokeEv
 }
 
 func main() {
-	machine := gstate.New[State, Event, Context]("observer-demo").
+	machine := gstate.New[State, Event, Data]("observer-demo").
 		Initial(Idle).
-		State(Idle, func(s *gstate.StateBuilder[State, Event, Context]) {
+		State(Idle, func(s *gstate.StateBuilder[State, Event, Data]) {
 			s.On(EventStart).GoTo(Loading)
 		}).
-		State(Loading, func(s *gstate.StateBuilder[State, Event, Context]) {
-			s.Invoke(func(_ context.Context, _ Context, _ func(func(Context) Context)) error {
+		State(Loading, func(s *gstate.StateBuilder[State, Event, Data]) {
+			s.Invoke(func(_ context.Context, _ Data, _ func(func(Data) Data)) error {
 				time.Sleep(50 * time.Millisecond)
 				return nil
 			}, Done, Done)
 		}).
-		State(Done, func(s *gstate.StateBuilder[State, Event, Context]) {
+		State(Done, func(s *gstate.StateBuilder[State, Event, Data]) {
 			s.Type(gstate.Final)
 		}).
 		Build()
 
 	// Combine a logger for live tracing with a recorder for post-hoc inspection.
 	logger := &loggingObserver{}
-	rec := &gstate.RecordingObserver[State, Event, Context]{}
+	rec := &gstate.RecordingObserver[State, Event, Data]{}
 
-	actor := gstate.Start(machine, Context{},
-		machine.WithObserver(gstate.MultiObserver[State, Event, Context]{logger, rec}),
+	actor := gstate.Start(machine, Data{},
+		machine.WithObserver(gstate.MultiObserver[State, Event, Data]{logger, rec}),
 	)
 	defer actor.Stop()
 
