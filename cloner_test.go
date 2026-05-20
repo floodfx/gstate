@@ -39,7 +39,7 @@ func TestClonerSupport(t *testing.T) {
 	actor.Send("INC")
 	// wait for process using a loop that checks the value
 	deadline := time.Now().Add(1 * time.Second)
-	for actor.Context().Value == 0 && time.Now().Before(deadline) {
+	for actor.Data().Value == 0 && time.Now().Before(deadline) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
@@ -48,7 +48,7 @@ func TestClonerSupport(t *testing.T) {
 	// Mutate actor context
 	actor.Send("INC")
 	deadline = time.Now().Add(1 * time.Second)
-	for actor.Context().Value == 1 && time.Now().Before(deadline) {
+	for actor.Data().Value == 1 && time.Now().Before(deadline) {
 		time.Sleep(1 * time.Millisecond)
 	}
 
@@ -61,7 +61,7 @@ func TestClonerSupport(t *testing.T) {
 	}
 
 	// Ensure deep copy of slice worked
-	if actor.Context().Data[1] != 1 {
+	if actor.Data().Data[1] != 1 {
 		t.Errorf("Expected actor data[1] to be 1")
 	}
 }

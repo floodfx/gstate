@@ -36,7 +36,7 @@ var idGen = func() func() string {
 // and manages asynchronous services (invocations and timers).
 type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	machine     *Machine[S, E, D]
-	context     D
+	data        D
 	active      map[S]bool
 	history     map[S]S
 	invocations map[S]context.CancelFunc
@@ -76,12 +76,12 @@ type envelope[E ~string] struct {
 	event E
 }
 
-// contextSnapshotPtr returns a pointer to a defensive copy of the actor's
+// dataSnapshotPtr returns a pointer to a defensive copy of the actor's
 // current context. It is used when building observer payloads so observers
 // cannot accidentally mutate the actor's live state through a payload's
 // Context pointer.
-func (a *Actor[S, E, D]) contextSnapshotPtr() *D {
-	c := a.context.Clone()
+func (a *Actor[S, E, D]) dataSnapshotPtr() *D {
+	c := a.data.Clone()
 	return &c
 }
 
@@ -132,7 +132,7 @@ func (m *Machine[S, E, D]) WithActorID(id ActorID) Option[S, E, D] {
 // applied in order; later values for the same option win. The returned Actor
 // is already running and ready to receive events via [Actor.Send] or
 // [Actor.SendCtx].
-func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialContext D, opts ...Option[S, E, D]) *Actor[S, E, D] {
+func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D, opts ...Option[S, E, D]) *Actor[S, E, D] {
 	cfg := config[S, E, D]{mailboxSize: defaultMailboxSize}
 	for _, o := range opts {
 		o(&cfg)
@@ -149,7 +149,7 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialContex
 
 	a := &Actor[S, E, D]{
 		machine:     m,
-		context:     initialContext,
+		data:        initialData,
 		active:      make(map[S]bool),
 		history:     make(map[S]S),
 		invocations: make(map[S]context.CancelFunc),
@@ -226,7 +226,7 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 
 	a := &Actor[S, E, D]{
 		machine:     m,
-		context:     snapshot.Data,
+		data:        snapshot.Data,
 		active:      active,
 		history:     history,
 		invocations: make(map[S]context.CancelFunc),
@@ -398,12 +398,12 @@ func (a *Actor[S, E, D]) ID() ActorID {
 	return a.id
 }
 
-// Context returns a thread-safe copy of the current context.
-// Thread safety is guaranteed by calling [Cloner.Clone] on the underlying context.
-func (a *Actor[S, E, D]) Context() D {
+// Data returns a thread-safe copy of the current data.
+// Thread safety is guaranteed by calling [Cloner.Clone] on the underlying data.
+func (a *Actor[S, E, D]) Data() D {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.context.Clone()
+	return a.data.Clone()
 }
 
 // restartServices triggers the background tasks (invokes/timers) for a state.
@@ -430,7 +430,7 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 		gen := a.nextGen
 		a.invokeGens[id] = gen
 
-		snap := a.context.Clone()
+		snap := a.data.Clone()
 		start := time.Now()
 
 		mutate := func(fn func(D) D) {
@@ -446,7 +446,7 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 			if a.invokeGens[id] != gen {
 				return
 			}
-			a.context = fn(a.context)
+			a.data = fn(a.data)
 		}
 
 		a.observer.OnInvokeStarted(ctx, InvokeEvent[S, E, D]{
@@ -514,7 +514,7 @@ func (a *Actor[S, E, D]) Snapshot() Snapshot[S, D] {
 		history[k] = v
 	}
 
-	ctx := a.context.Clone()
+	ctx := a.data.Clone()
 
 	return Snapshot[S, D]{
 		Active:  active,
@@ -700,7 +700,7 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 		if transitions, ok := stateDef.Transitions[event]; ok {
 			for _, t := range transitions {
 				if t.Guard != nil {
-					ok := t.Guard(a.context)
+					ok := t.Guard(a.data)
 					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, D]{
 						MachineID: a.machine.ID,
 						ActorID:   a.id,
@@ -708,7 +708,7 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 						Event:     event,
 						Target:    t.Target,
 						Result:    ok,
-						Data:      a.contextSnapshotPtr(),
+						Data:      a.dataSnapshotPtr(),
 						Timestamp: time.Now(),
 					})
 					if !ok {
@@ -741,14 +741,14 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 	// 1. Handle internal transitions (no target)
 	if t.Target == "" {
 		if t.Action != nil {
-			a.context = t.Action(a.context)
+			a.data = t.Action(a.data)
 			a.observer.OnActionExecuted(ctx, ActionEvent[S, E, D]{
 				MachineID: a.machine.ID,
 				ActorID:   a.id,
 				State:     sourceID,
 				Event:     event,
 				Target:    "",
-				Data:      a.contextSnapshotPtr(),
+				Data:      a.dataSnapshotPtr(),
 				Timestamp: time.Now(),
 			})
 		}
@@ -758,7 +758,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			From:      sourceID,
 			To:        "",
 			Event:     event,
-			Data:      a.contextSnapshotPtr(),
+			Data:      a.dataSnapshotPtr(),
 			Timestamp: time.Now(),
 		})
 		return
@@ -810,7 +810,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 		stateDef := a.machine.States[sID]
 		if stateDef != nil {
 			for _, action := range stateDef.Exit {
-				a.context = action(a.context)
+				a.data = action(a.data)
 			}
 			if cancel, ok := a.invocations[sID]; ok {
 				cancel()
@@ -833,21 +833,21 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
 			State:     sID,
-			Data:      a.contextSnapshotPtr(),
+			Data:      a.dataSnapshotPtr(),
 			Timestamp: time.Now(),
 		})
 	}
 
 	// 3. Execute transition action (Assign)
 	if t.Action != nil {
-		a.context = t.Action(a.context)
+		a.data = t.Action(a.data)
 		a.observer.OnActionExecuted(ctx, ActionEvent[S, E, D]{
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
 			State:     sourceID,
 			Event:     event,
 			Target:    t.Target,
-			Data:      a.contextSnapshotPtr(),
+			Data:      a.dataSnapshotPtr(),
 			Timestamp: time.Now(),
 		})
 	}
@@ -883,7 +883,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 		From:      sourceID,
 		To:        t.Target,
 		Event:     event,
-		Data:      a.contextSnapshotPtr(),
+		Data:      a.dataSnapshotPtr(),
 		Timestamp: time.Now(),
 	})
 }
@@ -899,14 +899,14 @@ func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 	}
 
 	for _, action := range stateDef.Entry {
-		a.context = action(a.context)
+		a.data = action(a.data)
 	}
 
 	a.observer.OnStateEntered(ctx, StateEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		State:     id,
-		Data:      a.contextSnapshotPtr(),
+		Data:      a.dataSnapshotPtr(),
 		Timestamp: time.Now(),
 	})
 
@@ -1011,7 +1011,7 @@ func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
 			}
 			for _, t := range stateDef.Always {
 				if t.Guard != nil {
-					ok := t.Guard(a.context)
+					ok := t.Guard(a.data)
 					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, D]{
 						MachineID: a.machine.ID,
 						ActorID:   a.id,
@@ -1019,7 +1019,7 @@ func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
 						Event:     zero,
 						Target:    t.Target,
 						Result:    ok,
-						Data:      a.contextSnapshotPtr(),
+						Data:      a.dataSnapshotPtr(),
 						Timestamp: time.Now(),
 					})
 					if !ok {
