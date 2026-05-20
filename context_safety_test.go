@@ -8,7 +8,7 @@ import (
 )
 
 // mutatingObserver attempts to mutate Context through every payload it sees.
-// If contextSnapshotPtr does its job, the actor's own context is unaffected.
+// If dataSnapshotPtr does its job, the actor's own context is unaffected.
 type mutatingObserver struct {
 	NopObserver[StateID, EventID, Context]
 }
@@ -64,7 +64,7 @@ func TestObserverCannotMutateActorContext(t *testing.T) {
 	a.Send("GO")
 	<-bar.done
 
-	got := a.Context()
+	got := a.Data()
 	if got.Count != 2 {
 		t.Errorf("actor context Count = %d, want 2 (observer mutation must not leak through)", got.Count)
 	}
@@ -210,7 +210,7 @@ func TestInvokeMutateAfterStateExit(t *testing.T) {
 
 	<-mutateDone
 
-	got := a.Context()
+	got := a.Data()
 	if got.Count == 9999 {
 		t.Errorf("actor context was mutated after state exit: got %v, want 42", got.Count)
 	}
@@ -248,7 +248,7 @@ func TestInvokeMutateAfterStop(t *testing.T) {
 
 	<-mutateDone
 
-	got := a.Context()
+	got := a.Data()
 	if got.Count == 9999 {
 		t.Errorf("actor context was mutated after actor stop: got %v, want 42", got.Count)
 	}
@@ -295,7 +295,7 @@ func TestInvokeReentryNewGeneration(t *testing.T) {
 
 	<-mutate1Done
 
-	got := a.Context()
+	got := a.Data()
 	if got.Count == 9999 {
 		t.Errorf("actor context was mutated by obsolete generation: got %v, want 42", got.Count)
 	}
@@ -390,7 +390,7 @@ func TestInvokeParallelConcurrentMutate(t *testing.T) {
 	<-done1
 	<-done2
 
-	got := a.Context()
+	got := a.Data()
 	if got.Count != 100 {
 		t.Errorf("actor Context Count = %d, want 100 (concurrent writes must serialize correctly)", got.Count)
 	}
