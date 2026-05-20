@@ -151,8 +151,8 @@ type Snapshot[S ~string, D Cloner[D]] struct {
 	Active []S `json:"active"`
 	// History maps compound state IDs to their last active child.
 	History map[S]S `json:"history"`
-	// Context is the deep-copied context data, captured safely using [Cloner.Clone].
-	Context D `json:"context"`
+	// Data is the deep-copied data, captured safely using [Cloner.Clone].
+	Data D `json:"data"`
 	// ActorID is the stable identifier of the actor that produced this snapshot.
 	// [Hydrate] restores it so telemetry correlation survives serialization.
 	ActorID ActorID `json:"actor_id,omitempty"`

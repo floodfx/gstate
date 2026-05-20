@@ -28,8 +28,8 @@ func TestActorPersistence(t *testing.T) {
 	if actor.State() != "active" {
 		t.Errorf("Expected state active, got %s", actor.State())
 	}
-	if actor.Snapshot().Context.Count != 1 {
-		t.Errorf("Expected count 1, got %d", actor.Snapshot().Context.Count)
+	if actor.Snapshot().Data.Count != 1 {
+		t.Errorf("Expected count 1, got %d", actor.Snapshot().Data.Count)
 	}
 
 	snapshot := actor.Snapshot()
@@ -40,8 +40,8 @@ func TestActorPersistence(t *testing.T) {
 	if actor2.State() != "active" {
 		t.Errorf("Expected hydrated state active, got %s", actor2.State())
 	}
-	if actor2.Snapshot().Context.Count != 1 {
-		t.Errorf("Expected hydrated count 1, got %d", actor2.Snapshot().Context.Count)
+	if actor2.Snapshot().Data.Count != 1 {
+		t.Errorf("Expected hydrated count 1, got %d", actor2.Snapshot().Data.Count)
 	}
 
 	actor2.Send("STOP")

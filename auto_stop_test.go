@@ -355,7 +355,7 @@ func TestAutoStopOnHydratedFinal(t *testing.T) {
 	snap := Snapshot[StateID, Context]{
 		Active:  []StateID{"done"},
 		History: map[StateID]StateID{},
-		Context: Context{},
+		Data:    Context{},
 		ActorID: "hydrated-final",
 	}
 

@@ -14,28 +14,28 @@ type mutatingObserver struct {
 }
 
 func (mutatingObserver) OnStateEntered(_ context.Context, e StateEvent[StateID, EventID, Context]) {
-	if e.Context != nil {
-		e.Context.Count = 9999
+	if e.Data != nil {
+		e.Data.Count = 9999
 	}
 }
 func (mutatingObserver) OnStateExited(_ context.Context, e StateEvent[StateID, EventID, Context]) {
-	if e.Context != nil {
-		e.Context.Count = 9999
+	if e.Data != nil {
+		e.Data.Count = 9999
 	}
 }
 func (mutatingObserver) OnTransition(_ context.Context, e TransitionEvent[StateID, EventID, Context]) {
-	if e.Context != nil {
-		e.Context.Count = 9999
+	if e.Data != nil {
+		e.Data.Count = 9999
 	}
 }
 func (mutatingObserver) OnGuardEvaluated(_ context.Context, e GuardEvent[StateID, EventID, Context]) {
-	if e.Context != nil {
-		e.Context.Count = 9999
+	if e.Data != nil {
+		e.Data.Count = 9999
 	}
 }
 func (mutatingObserver) OnActionExecuted(_ context.Context, e ActionEvent[StateID, EventID, Context]) {
-	if e.Context != nil {
-		e.Context.Count = 9999
+	if e.Data != nil {
+		e.Data.Count = 9999
 	}
 }
 
@@ -169,11 +169,11 @@ func TestSnapshotRacesInvokeWrites(t *testing.T) {
 	// and Snapshot acquires the read lock, there should be zero data races.
 	for i := 0; i < 100; i++ {
 		snap := a.Snapshot()
-		if snap.Context == nil {
+		if snap.Data == nil {
 			t.Fatal("Snapshot returned a nil context")
 		}
-		if snap.Context.Count < 0 {
-			t.Errorf("coherence check failed: snapshot Count is invalid: %d", snap.Context.Count)
+		if snap.Data.Count < 0 {
+			t.Errorf("coherence check failed: snapshot Count is invalid: %d", snap.Data.Count)
 		}
 	}
 }

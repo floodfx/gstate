@@ -226,7 +226,7 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 
 	a := &Actor[S, E, D]{
 		machine:     m,
-		context:     snapshot.Context,
+		context:     snapshot.Data,
 		active:      active,
 		history:     history,
 		invocations: make(map[S]context.CancelFunc),
@@ -519,7 +519,7 @@ func (a *Actor[S, E, D]) Snapshot() Snapshot[S, D] {
 	return Snapshot[S, D]{
 		Active:  active,
 		History: history,
-		Context: ctx,
+		Data:    ctx,
 		ActorID: a.id,
 	}
 }
@@ -708,7 +708,7 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 						Event:     event,
 						Target:    t.Target,
 						Result:    ok,
-						Context:   a.contextSnapshotPtr(),
+						Data:      a.contextSnapshotPtr(),
 						Timestamp: time.Now(),
 					})
 					if !ok {
@@ -748,7 +748,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 				State:     sourceID,
 				Event:     event,
 				Target:    "",
-				Context:   a.contextSnapshotPtr(),
+				Data:      a.contextSnapshotPtr(),
 				Timestamp: time.Now(),
 			})
 		}
@@ -758,7 +758,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			From:      sourceID,
 			To:        "",
 			Event:     event,
-			Context:   a.contextSnapshotPtr(),
+			Data:      a.contextSnapshotPtr(),
 			Timestamp: time.Now(),
 		})
 		return
@@ -833,7 +833,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
 			State:     sID,
-			Context:   a.contextSnapshotPtr(),
+			Data:      a.contextSnapshotPtr(),
 			Timestamp: time.Now(),
 		})
 	}
@@ -847,7 +847,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			State:     sourceID,
 			Event:     event,
 			Target:    t.Target,
-			Context:   a.contextSnapshotPtr(),
+			Data:      a.contextSnapshotPtr(),
 			Timestamp: time.Now(),
 		})
 	}
@@ -883,7 +883,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 		From:      sourceID,
 		To:        t.Target,
 		Event:     event,
-		Context:   a.contextSnapshotPtr(),
+		Data:      a.contextSnapshotPtr(),
 		Timestamp: time.Now(),
 	})
 }
@@ -906,7 +906,7 @@ func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		State:     id,
-		Context:   a.contextSnapshotPtr(),
+		Data:      a.contextSnapshotPtr(),
 		Timestamp: time.Now(),
 	})
 
@@ -1019,7 +1019,7 @@ func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
 						Event:     zero,
 						Target:    t.Target,
 						Result:    ok,
-						Context:   a.contextSnapshotPtr(),
+						Data:      a.contextSnapshotPtr(),
 						Timestamp: time.Now(),
 					})
 					if !ok {

@@ -81,7 +81,7 @@ type TransitionEvent[S ~string, E ~string, D Cloner[D]] struct {
 	// Event is the triggering event. Zero value when the transition fires from
 	// an Always, Delayed, or invoke-completion path.
 	Event     E         `json:"event,omitempty"`
-	Context   *D        `json:"context,omitempty"`
+	Data      *D        `json:"data,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -106,7 +106,7 @@ type GuardEvent[S ~string, E ~string, D Cloner[D]] struct {
 	Event     E         `json:"event,omitempty"`
 	Target    S         `json:"target"`
 	Result    bool      `json:"result"`
-	Context   *D        `json:"context,omitempty"`
+	Data      *D        `json:"data,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -164,7 +164,7 @@ type StateEvent[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string    `json:"machine_id"`
 	ActorID   ActorID   `json:"actor_id"`
 	State     S         `json:"state"`
-	Context   *D        `json:"context,omitempty"`
+	Data      *D        `json:"data,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -184,7 +184,7 @@ type ActionEvent[S ~string, E ~string, D Cloner[D]] struct {
 	Event E `json:"event,omitempty"`
 	// Target is the destination state ID, or zero for internal transitions.
 	Target    S         `json:"target,omitempty"`
-	Context   *D        `json:"context,omitempty"`
+	Data      *D        `json:"data,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

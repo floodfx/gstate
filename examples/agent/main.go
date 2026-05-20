@@ -109,7 +109,7 @@ func main() {
 			fmt.Println("Action: Sending YES")
 			actor.Send(EventYes)
 		case StateFixing:
-			if actor.Snapshot().Context.FixAttempts < 1 {
+			if actor.Snapshot().Data.FixAttempts < 1 {
 				fmt.Println("Action: Sending RETRY")
 				actor.Send(EventRetry)
 			} else {
