@@ -299,3 +299,69 @@ func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 
 	actor.Stop()
 }
+
+// TestSortedActiveStatesDeterministicTieBreaker verifies that equal-depth
+// states are sorted in a strictly deterministic, alphabetical order.
+func TestSortedActiveStatesDeterministicTieBreaker(t *testing.T) {
+	type S = string
+	type E = string
+	type C = struct{}
+
+	m := New[S, E, C]("tie-breaker").
+		Initial("idle").
+		State("idle", func(s *StateBuilder[S, E, C]) {
+			s.On("GO").GoTo("par")
+		}).
+		State("par", func(s *StateBuilder[S, E, C]) {
+			s.Type(Parallel)
+			// Add 10 parallel regions: r0 through r9
+			for r := 0; r < 10; r++ {
+				region := S(fmt.Sprintf("r%d", r))
+				child := S(fmt.Sprintf("r%d.child", r))
+				s.State(region, func(rs *StateBuilder[S, E, C]) {
+					rs.Initial(child)
+					rs.State(child, func(_ *StateBuilder[S, E, C]) {})
+				})
+			}
+		}).
+		Build()
+
+	enteredPar := make(chan struct{})
+	obs := ObserverFuncs[S, E, C]{
+		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, C]) {
+			if e.To == "par" {
+				close(enteredPar)
+			}
+		},
+	}
+
+	actor := Start(m, struct{}{}, m.WithObserver(obs))
+	actor.Send("GO")
+	<-enteredPar
+
+	got := actor.States()
+	actor.Stop()
+
+	// Expected sorted states:
+	// - "par" (depth 1)
+	// - "r0" to "r9" (depth 2) sorted alphabetically ascending
+	// - "r0.child" to "r9.child" (depth 3) sorted alphabetically ascending
+	want := []string{"par"}
+	for r := 0; r < 10; r++ {
+		want = append(want, fmt.Sprintf("r%d", r))
+	}
+	for r := 0; r < 10; r++ {
+		want = append(want, fmt.Sprintf("r%d.child", r))
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d states, want %d: got %v", len(got), len(want), got)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("state at index %d: got %q, want %q\nFull got list:  %v\nFull want list: %v", i, got[i], want[i], got, want)
+		}
+	}
+}
+
