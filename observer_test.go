@@ -94,9 +94,9 @@ func TestRecordingObserverDirectCalls(t *testing.T) {
 
 	rec.OnEventReceived(ctx, EventNotice[StateID, EventID, Context]{Event: "GO"})
 	rec.OnGuardEvaluated(ctx, GuardEvent[StateID, EventID, Context]{State: "a", Target: "b", Result: true})
-	rec.OnStateExited(ctx, StateEvent[StateID, EventID, Context]{State: "a", Context: &c})
+	rec.OnStateExited(ctx, StateEvent[StateID, EventID, Context]{State: "a", Data: &c})
 	rec.OnActionExecuted(ctx, ActionEvent[StateID, EventID, Context]{State: "a", Target: "b", Event: "GO"})
-	rec.OnStateEntered(ctx, StateEvent[StateID, EventID, Context]{State: "b", Context: &c})
+	rec.OnStateEntered(ctx, StateEvent[StateID, EventID, Context]{State: "b", Data: &c})
 	rec.OnTransition(ctx, TransitionEvent[StateID, EventID, Context]{From: "a", To: "b", Event: "GO"})
 	rec.OnInvokeStarted(ctx, InvokeEvent[StateID, EventID, Context]{State: "b"})
 	rec.OnInvokeCompleted(ctx, InvokeEvent[StateID, EventID, Context]{State: "b", Duration: time.Millisecond})

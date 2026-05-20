@@ -53,11 +53,11 @@ func TestClonerSupport(t *testing.T) {
 	}
 
 	// Snapshot should have the OLD data
-	if snapshot.Context.Value != 1 {
-		t.Errorf("Expected snapshot value 1, got %d", snapshot.Context.Value)
+	if snapshot.Data.Value != 1 {
+		t.Errorf("Expected snapshot value 1, got %d", snapshot.Data.Value)
 	}
-	if len(snapshot.Context.Data) != 2 {
-		t.Errorf("Expected snapshot data length 2, got %d", len(snapshot.Context.Data))
+	if len(snapshot.Data.Data) != 2 {
+		t.Errorf("Expected snapshot data length 2, got %d", len(snapshot.Data.Data))
 	}
 
 	// Ensure deep copy of slice worked

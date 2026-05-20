@@ -70,7 +70,7 @@ func main() {
 	actor.Send(EventIncrement)
 
 	time.Sleep(10 * time.Millisecond)
-	fmt.Printf("Current state: %s, Count: %d\n", actor.State(), actor.Snapshot().Context.Count)
+	fmt.Printf("Current state: %s, Count: %d\n", actor.State(), actor.Snapshot().Data.Count)
 
 	fmt.Println("\n--- Moving to Active ---")
 	actor.Send(EventStart)
@@ -80,5 +80,5 @@ func main() {
 	fmt.Println("\n--- Stopping ---")
 	actor.Send(EventStop)
 	time.Sleep(10 * time.Millisecond)
-	fmt.Printf("Final state: %s, Count: %d\n", actor.State(), actor.Snapshot().Context.Count)
+	fmt.Printf("Final state: %s, Count: %d\n", actor.State(), actor.Snapshot().Data.Count)
 }
