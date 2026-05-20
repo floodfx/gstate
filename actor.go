@@ -40,7 +40,11 @@ type Actor[S ~string, E ~string, C Cloner[C]] struct {
 	active      map[S]bool
 	history     map[S]S
 	invocations map[S]context.CancelFunc
+	// invokeGens maps active state IDs to their active entry generation token.
+	// This token ensures that a stale mutate closure spawned during a previous
+	// state entry cannot apply mutations after the state has exited or re-entered.
 	invokeGens  map[S]uint64
+	// nextGen tracks the monotonic generation count for state entries.
 	nextGen     uint64
 	timers      map[S][]*time.Timer
 	mailbox     chan envelope[E]
@@ -418,6 +422,10 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 		invokeCtx, cancel := context.WithCancel(ctx)
 		a.invocations[id] = cancel
 
+		// Monotonically increment the generation token for this new state entry.
+		// Any mutate closures spawned for this invocation will capture this 'gen'
+		// value and will only commit mutations if this generation matches the
+		// currently active state entry generation in invokeGens.
 		a.nextGen++
 		gen := a.nextGen
 		a.invokeGens[id] = gen
@@ -433,8 +441,10 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 				return
 			default:
 			}
+			// Reject mutations if the state has exited or if a new entry has 
+			// superseded this invoke's generation (e.g. during A -> B -> A cycling).
 			if a.invokeGens[id] != gen {
-				return // superseded by re-entry, or state exited
+				return
 			}
 			a.context = fn(a.context)
 		}
