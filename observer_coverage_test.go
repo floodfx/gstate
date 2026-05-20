@@ -75,7 +75,7 @@ func TestOnTransitionFiresOncePerInvokeCompletion(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke_once").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(_ context.Context, _ Context) error { return nil }, "done", "fail")
+			s.Invoke(func(_ context.Context, _ Context, _ func(func(Context) Context)) error { return nil }, "done", "fail")
 		}).
 		State("done", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).

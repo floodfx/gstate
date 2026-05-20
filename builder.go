@@ -7,12 +7,12 @@ import (
 )
 
 // MachineBuilder provides a fluent API for declaring statechart definitions.
-type MachineBuilder[S ~string, E ~string, C any] struct {
+type MachineBuilder[S ~string, E ~string, C Cloner[C]] struct {
 	machine *Machine[S, E, C]
 }
 
 // New initiates the creation of a new statechart machine definition.
-func New[S ~string, E ~string, C any](id string) *MachineBuilder[S, E, C] {
+func New[S ~string, E ~string, C Cloner[C]](id string) *MachineBuilder[S, E, C] {
 	return &MachineBuilder[S, E, C]{
 		machine: &Machine[S, E, C]{
 			ID:     id,
@@ -138,7 +138,7 @@ func (m *MachineBuilder[S, E, C]) computeMetadata(id S, depth int, path []S) {
 }
 
 // StateBuilder provides methods for configuring a specific state's properties and children.
-type StateBuilder[S ~string, E ~string, C any] struct {
+type StateBuilder[S ~string, E ~string, C Cloner[C]] struct {
 	machine *Machine[S, E, C]
 	state   *StateDef[S, E, C]
 }
@@ -196,11 +196,15 @@ func (s *StateBuilder[S, E, C]) ExitLabel(name string) {
 }
 
 // Invoke configures an asynchronous service to run during the state's lifecycle.
-// onDone: state to transition to on success.
-// onError: state to transition to on failure.
-func (s *StateBuilder[S, E, C]) Invoke(fn func(context.Context, C) error, onDone S, onError S) {
+//
+// Parameters:
+// - fn: service function receiving ctx, entry snapshot, and mutate callback.
+//   For details on the parameter contracts, see the documentation for InvokeDef.Func.
+// - onDone: state to transition to on success (when fn returns nil).
+// - onError: state to transition to on failure (when fn returns a non-nil error).
+func (s *StateBuilder[S, E, C]) Invoke(fn func(ctx context.Context, snap C, mutate func(func(C) C)) error, onDone S, onError S) {
 	s.state.Invoke = &InvokeDef[S, E, C]{
-		Src:     fn,
+		Func:    fn,
 		OnDone:  onDone,
 		OnError: onError,
 	}
@@ -245,7 +249,7 @@ func (s *StateBuilder[S, E, C]) After(d time.Duration) *TransitionBuilder[S, E, 
 }
 
 // TransitionBuilder provides a fluent API for configuring a state transition.
-type TransitionBuilder[S ~string, E ~string, C any] struct {
+type TransitionBuilder[S ~string, E ~string, C Cloner[C]] struct {
 	def TransitionDef[S, E, C]
 }
 

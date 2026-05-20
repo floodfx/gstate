@@ -26,6 +26,10 @@ type Context struct {
 	Attempts int
 }
 
+func (c Context) Clone() Context {
+	return c
+}
+
 // loggingObserver embeds NopObserver and overrides just the methods we want
 // to surface in stdout. It is a typical shape: small, focused, free to ignore
 // most callbacks.
@@ -56,7 +60,7 @@ func main() {
 			s.On(EventStart).GoTo(Loading)
 		}).
 		State(Loading, func(s *gstate.StateBuilder[State, Event, Context]) {
-			s.Invoke(func(_ context.Context, _ Context) error {
+			s.Invoke(func(_ context.Context, _ Context, _ func(func(Context) Context)) error {
 				time.Sleep(50 * time.Millisecond)
 				return nil
 			}, Done, Done)

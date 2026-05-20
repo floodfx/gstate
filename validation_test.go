@@ -47,7 +47,7 @@ func TestValidation_ValidMachine(t *testing.T) {
 			s.State("nested_done", func(s2 *StateBuilder[StateID, EventID, Context]) {
 				s2.After(10 * time.Millisecond).GoTo("nested_idle")
 			})
-			s.Invoke(func(ctx context.Context, c Context) error { return nil }, "completed", "failed")
+			s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error { return nil }, "completed", "failed")
 		}).
 		State("completed", func(s *StateBuilder[StateID, EventID, Context]) {
 			s.Type(Final)
@@ -117,7 +117,7 @@ func TestValidation_InvalidInvokeDoneTarget(t *testing.T) {
 		_ = New[StateID, EventID, Context]("test").
 			Initial("idle").
 			State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
-				s.Invoke(func(ctx context.Context, c Context) error { return nil }, "non_existent", "idle")
+				s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error { return nil }, "non_existent", "idle")
 			}).
 			Build()
 	}, "gstate: machine \"test\" state \"idle\" has invalid Invoke OnDone target: \"non_existent\" does not exist")
@@ -128,7 +128,7 @@ func TestValidation_InvalidInvokeErrorTarget(t *testing.T) {
 		_ = New[StateID, EventID, Context]("test").
 			Initial("idle").
 			State("idle", func(s *StateBuilder[StateID, EventID, Context]) {
-				s.Invoke(func(ctx context.Context, c Context) error { return nil }, "idle", "non_existent")
+				s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error { return nil }, "idle", "non_existent")
 			}).
 			Build()
 	}, "gstate: machine \"test\" state \"idle\" has invalid Invoke OnError target: \"non_existent\" does not exist")

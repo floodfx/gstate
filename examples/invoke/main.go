@@ -10,7 +10,11 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext any
+type MyContext struct{}
+
+func (c MyContext) Clone() MyContext {
+	return c
+}
 
 func main() {
 	// 1. Invoked Services are goroutines that represent external side effects.
@@ -20,7 +24,7 @@ func main() {
 		Initial("loading").
 		State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
 			// s.Invoke starts a new goroutine when we enter 'loading'.
-			s.Invoke(func(ctx context.Context, c MyContext) error {
+			s.Invoke(func(ctx context.Context, snap MyContext, mutate func(func(MyContext) MyContext)) error {
 				fmt.Println("  [Invoke] Starting async work...")
 				select {
 				case <-time.After(100 * time.Millisecond):
@@ -48,13 +52,13 @@ func main() {
 
 	fmt.Println("--- Test Case 1: Completion ---")
 	// Let the service finish naturally.
-	actor1 := gstate.Start(machine, nil)
+	actor1 := gstate.Start(machine, MyContext{})
 	time.Sleep(150 * time.Millisecond)
 	fmt.Printf("Final State: %s\n", actor1.State())
 
 	fmt.Println("\n--- Test Case 2: Cancellation ---")
 	// Interrupt the service by sending an event to change states.
-	actor2 := gstate.Start(machine, nil)
+	actor2 := gstate.Start(machine, MyContext{})
 	time.Sleep(20 * time.Millisecond)
 
 	fmt.Println("Action: Sending CANCEL event...")

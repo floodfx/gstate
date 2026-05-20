@@ -35,11 +35,15 @@ type MyContext struct {
 	RepoDir     string
 }
 
+func (c MyContext) Clone() MyContext {
+	return c
+}
+
 func main() {
 	machine := gstate.New[MyState, MyEvent, MyContext]("agent").
 		Initial(StateInvestigating).
 		State(StateInvestigating, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-			s.Invoke(func(ctx context.Context, c MyContext) error {
+			s.Invoke(func(ctx context.Context, snap MyContext, mutate func(func(MyContext) MyContext)) error {
 				fmt.Println("-> [investigating] Running diagnostics...")
 				time.Sleep(100 * time.Millisecond)
 				return nil

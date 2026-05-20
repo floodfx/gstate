@@ -20,7 +20,7 @@ func TestStopWaitsForInvokeGoroutine(t *testing.T) {
 	m := New[StateID, EventID, Context]("stop_drain_invoke").
 		Initial("active").
 		State("active", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(ctx context.Context, _ Context) error {
+			s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
 				defer close(done)
 				close(started)
 				<-ctx.Done()
@@ -162,7 +162,7 @@ func TestNoGoroutineLeakAfterStop(t *testing.T) {
 	m := New[StateID, EventID, Context]("stop_no_leak").
 		Initial("active").
 		State("active", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(ctx context.Context, _ Context) error {
+			s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
 				close(started)
 				<-ctx.Done()
 				return ctx.Err()

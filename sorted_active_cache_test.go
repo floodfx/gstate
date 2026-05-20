@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+type cacheCtx struct{}
+
+func (c cacheCtx) Clone() cacheCtx {
+	return c
+}
+
 // TestSortedActiveCacheFlat verifies that States() returns the correct
 // active state after every transition in a rapid flat ping/pong loop.
 // A stale cache in getSortedActiveStatesLocked would return the previous
@@ -14,7 +20,7 @@ import (
 func TestSortedActiveCacheFlat(t *testing.T) {
 	type S = string
 	type E = string
-	type C = struct{}
+	type C = cacheCtx
 
 	m := New[S, E, C]("cache-flat").
 		Initial("a").
@@ -52,7 +58,7 @@ func TestSortedActiveCacheFlat(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, struct{}{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
 	for i := 0; i < len(expected); i++ {
 		actor.Send("GO")
 	}
@@ -77,7 +83,7 @@ func TestSortedActiveCacheFlat(t *testing.T) {
 func TestSortedActiveCacheHierarchical(t *testing.T) {
 	type S = string
 	type E = string
-	type C = struct{}
+	type C = cacheCtx
 
 	m := New[S, E, C]("cache-hier").
 		Initial("left").
@@ -118,7 +124,7 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, struct{}{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
 
 	// Initial: [left, left.child]
 	states := actor.States()
@@ -159,7 +165,7 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 func TestSortedActiveCacheParallel(t *testing.T) {
 	type S = string
 	type E = string
-	type C = struct{}
+	type C = cacheCtx
 
 	m := New[S, E, C]("cache-par").
 		Initial("idle").
@@ -196,7 +202,7 @@ func TestSortedActiveCacheParallel(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, struct{}{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
 
 	// idle -> par
 	actor.Send("GO")
@@ -230,7 +236,7 @@ func TestSortedActiveCacheParallel(t *testing.T) {
 func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 	type S = string
 	type E = string
-	type C = struct{}
+	type C = cacheCtx
 
 	// s0 --always--> s1 --always--> s2 --always--> terminal
 	m := New[S, E, C]("cache-always").
@@ -274,7 +280,7 @@ func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, struct{}{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
 	actor.Send("GO")
 	actor.Send("RESET")
 	<-done
@@ -305,7 +311,7 @@ func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 func TestSortedActiveStatesDeterministicTieBreaker(t *testing.T) {
 	type S = string
 	type E = string
-	type C = struct{}
+	type C = cacheCtx
 
 	m := New[S, E, C]("tie-breaker").
 		Initial("idle").
@@ -335,7 +341,7 @@ func TestSortedActiveStatesDeterministicTieBreaker(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, struct{}{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
 	actor.Send("GO")
 	<-enteredPar
 

@@ -41,7 +41,7 @@ import (
 //     not affect the actor. If C implements [Cloner], that deep copy is used.
 //
 // To implement only a subset of the methods, embed [NopObserver].
-type Observer[S ~string, E ~string, C any] interface {
+type Observer[S ~string, E ~string, C Cloner[C]] interface {
 	OnTransition(ctx context.Context, e TransitionEvent[S, E, C])
 	OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, C])
 	OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, C])
@@ -73,7 +73,7 @@ const (
 )
 
 // TransitionEvent is the payload for [Observer.OnTransition].
-type TransitionEvent[S ~string, E ~string, C any] struct {
+type TransitionEvent[S ~string, E ~string, C Cloner[C]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	From      S       `json:"from"`
@@ -98,7 +98,7 @@ func (e TransitionEvent[S, E, C]) String() string {
 // GuardEvent is the payload for [Observer.OnGuardEvaluated]. It is emitted
 // only when the transition defines a non-nil Guard, so the absence of an
 // event does not imply the absence of guard evaluation.
-type GuardEvent[S ~string, E ~string, C any] struct {
+type GuardEvent[S ~string, E ~string, C Cloner[C]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	State     S       `json:"state"`
@@ -117,7 +117,7 @@ func (e GuardEvent[S, E, C]) String() string {
 
 // InvokeEvent is the payload for [Observer.OnInvokeStarted] and
 // [Observer.OnInvokeCompleted].
-type InvokeEvent[S ~string, E ~string, C any] struct {
+type InvokeEvent[S ~string, E ~string, C Cloner[C]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	State     S       `json:"state"`
@@ -160,7 +160,7 @@ func (e InvokeEvent[S, E, C]) MarshalJSON() ([]byte, error) {
 }
 
 // StateEvent is the payload for [Observer.OnStateEntered] and [Observer.OnStateExited].
-type StateEvent[S ~string, E ~string, C any] struct {
+type StateEvent[S ~string, E ~string, C Cloner[C]] struct {
 	MachineID string    `json:"machine_id"`
 	ActorID   ActorID   `json:"actor_id"`
 	State     S         `json:"state"`
@@ -175,7 +175,7 @@ func (e StateEvent[S, E, C]) String() string {
 
 // ActionEvent is the payload for [Observer.OnActionExecuted]. It is emitted
 // only when a transition has a non-nil Action.
-type ActionEvent[S ~string, E ~string, C any] struct {
+type ActionEvent[S ~string, E ~string, C Cloner[C]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	// State is the source state of the firing transition.
@@ -200,7 +200,7 @@ func (e ActionEvent[S, E, C]) String() string {
 
 // EventNotice is the payload for [Observer.OnEventReceived] and
 // [Observer.OnEventDropped].
-type EventNotice[S ~string, E ~string, C any] struct {
+type EventNotice[S ~string, E ~string, C Cloner[C]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	Event     E       `json:"event"`
@@ -231,7 +231,7 @@ func (e EventNotice[S, E, C]) String() string {
 // Members are dispatched in slice order; each member's callback completes
 // before the next runs. MultiObserver inherits the threading contract on
 // [Observer]: a slow or panicking member blocks the actor.
-type MultiObserver[S ~string, E ~string, C any] []Observer[S, E, C]
+type MultiObserver[S ~string, E ~string, C Cloner[C]] []Observer[S, E, C]
 
 func (m MultiObserver[S, E, C]) OnTransition(ctx context.Context, e TransitionEvent[S, E, C]) {
 	for _, o := range m {
@@ -297,11 +297,11 @@ func (m MultiObserver[S, E, C]) OnEventDropped(ctx context.Context, e EventNotic
 //	actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
 //	actor.Send(EventGo)
 //	<-ready
-func SignalObserver[S ~string, E ~string, C any](signal func()) Observer[S, E, C] {
+func SignalObserver[S ~string, E ~string, C Cloner[C]](signal func()) Observer[S, E, C] {
 	return signalObserver[S, E, C]{signal: signal}
 }
 
-type signalObserver[S ~string, E ~string, C any] struct {
+type signalObserver[S ~string, E ~string, C Cloner[C]] struct {
 	signal func()
 }
 
@@ -355,7 +355,7 @@ func (o signalObserver[S, E, C]) OnEventDropped(context.Context, EventNotice[S, 
 // value receivers. Do not mutate fields after installing on an actor.
 // Callback bodies must be non-blocking — see [Observer]'s threading
 // contract.
-type ObserverFuncs[S ~string, E ~string, C any] struct {
+type ObserverFuncs[S ~string, E ~string, C Cloner[C]] struct {
 	// AnyFunc fires for every lifecycle callback before the
 	// kind-specific field (if any). Useful as a single "something
 	// happened" hook for waiters and counters that still want the
@@ -443,7 +443,7 @@ func (o ObserverFuncs[S, E, C]) OnEventDropped(ctx context.Context, e EventNotic
 //	func (o *myObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) {
 //	    // ...
 //	}
-type NopObserver[S ~string, E ~string, C any] struct{}
+type NopObserver[S ~string, E ~string, C Cloner[C]] struct{}
 
 func (NopObserver[S, E, C]) OnTransition(context.Context, TransitionEvent[S, E, C])  {}
 func (NopObserver[S, E, C]) OnGuardEvaluated(context.Context, GuardEvent[S, E, C])   {}
@@ -480,7 +480,7 @@ func (r RecordedEvent) String() string {
 // The recorder satisfies [Observer] by overriding every method on the embedded
 // [NopObserver]; callers receive ordering identical to the engine's call
 // sequence.
-type RecordingObserver[S ~string, E ~string, C any] struct {
+type RecordingObserver[S ~string, E ~string, C Cloner[C]] struct {
 	NopObserver[S, E, C]
 	mu     sync.Mutex
 	events []RecordedEvent
@@ -595,7 +595,7 @@ func (r *RecordingObserver[S, E, C]) EventsDropped() []EventNotice[S, E, C] {
 	return collect[EventNotice[S, E, C]](r, KindEventDropped)
 }
 
-func collect[T any, S ~string, E ~string, C any](r *RecordingObserver[S, E, C], kind string) []T {
+func collect[T any, S ~string, E ~string, C Cloner[C]](r *RecordingObserver[S, E, C], kind string) []T {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]T, 0)

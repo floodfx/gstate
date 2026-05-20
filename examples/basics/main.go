@@ -29,6 +29,10 @@ type MyContext struct {
 	Count int
 }
 
+func (c MyContext) Clone() MyContext {
+	return c
+}
+
 func main() {
 	// 3. Build the Machine using the defined constants.
 	machine := gstate.New[MyState, MyEvent, MyContext]("counter").

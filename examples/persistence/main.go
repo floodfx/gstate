@@ -17,6 +17,10 @@ type MyContext struct {
 	Value string `json:"value"`
 }
 
+func (c MyContext) Clone() MyContext {
+	return c
+}
+
 func main() {
 	// 1. Persistence and Hydration allow you to save and restore the state of an actor.
 	// This is critical for long-running workflows that must survive app restarts.

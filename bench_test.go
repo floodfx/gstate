@@ -19,6 +19,10 @@ type benchCtx struct {
 	Count int
 }
 
+func (c benchCtx) Clone() benchCtx {
+	return c
+}
+
 // benchCloneCtx implements Cloner for the context-snapshot benchmarks.
 type benchCloneCtx struct {
 	Count int
@@ -525,7 +529,7 @@ func BenchmarkInvokeStartCancel(b *testing.B) {
 			s.On(startEv).GoTo("invoking")
 		}).
 		State("invoking", func(s *StateBuilder[benchState, benchEvent, benchCtx]) {
-			s.Invoke(func(ctx context.Context, _ benchCtx) error {
+			s.Invoke(func(ctx context.Context, _ benchCtx, _ func(func(benchCtx) benchCtx)) error {
 				<-ctx.Done()
 				return ctx.Err()
 			}, "idle", "idle")

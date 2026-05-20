@@ -11,7 +11,7 @@ func TestActorInvoke(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(ctx context.Context, c Context) error {
+			s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
 				time.Sleep(20 * time.Millisecond)
 				return nil
 			}, "success", "failure")
@@ -40,7 +40,7 @@ func TestActorInvokeError(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke_error").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
-			s.Invoke(func(ctx context.Context, c Context) error {
+			s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
 				time.Sleep(20 * time.Millisecond)
 				return errors.New("fail")
 			}, "success", "failure")

@@ -34,12 +34,18 @@ var idGen = func() func() string {
 // Actor is the runtime interpreter for a statechart machine.
 // It maintains the current state, processes events sequentially,
 // and manages asynchronous services (invocations and timers).
-type Actor[S ~string, E ~string, C any] struct {
+type Actor[S ~string, E ~string, C Cloner[C]] struct {
 	machine     *Machine[S, E, C]
 	context     C
 	active      map[S]bool
 	history     map[S]S
 	invocations map[S]context.CancelFunc
+	// invokeGens maps active state IDs to their active entry generation token.
+	// This token ensures that a stale mutate closure spawned during a previous
+	// state entry cannot apply mutations after the state has exited or re-entered.
+	invokeGens  map[S]uint64
+	// nextGen tracks the monotonic generation count for state entries.
+	nextGen     uint64
 	timers      map[S][]*time.Timer
 	mailbox     chan envelope[E]
 	mu          sync.RWMutex
@@ -73,20 +79,15 @@ type envelope[E ~string] struct {
 // contextSnapshotPtr returns a pointer to a defensive copy of the actor's
 // current context. It is used when building observer payloads so observers
 // cannot accidentally mutate the actor's live state through a payload's
-// Context pointer. When C implements [Cloner] the deep copy is used;
-// otherwise Go's value-copy semantics suffice.
+// Context pointer.
 func (a *Actor[S, E, C]) contextSnapshotPtr() *C {
-	if cloner, ok := any(a.context).(Cloner[C]); ok {
-		c := cloner.Clone()
-		return &c
-	}
-	c := a.context
+	c := a.context.Clone()
 	return &c
 }
 
 // config holds the resolved configuration for an [Actor]. It is built by
 // applying [Option] values passed to [Start].
-type config[S ~string, E ~string, C any] struct {
+type config[S ~string, E ~string, C Cloner[C]] struct {
 	mailboxSize int
 	observer    Observer[S, E, C]
 	actorID     ActorID
@@ -103,7 +104,7 @@ type config[S ~string, E ~string, C any] struct {
 //	    m.WithObserver(obs),
 //	    m.WithActorID("worker-42"),
 //	)
-type Option[S ~string, E ~string, C any] func(*config[S, E, C])
+type Option[S ~string, E ~string, C Cloner[C]] func(*config[S, E, C])
 
 // WithMailboxSize returns an [Option] that sets the buffered capacity of the
 // actor's event channel. When omitted, the default is 100. Values <= 0 fall
@@ -131,7 +132,7 @@ func (m *Machine[S, E, C]) WithActorID(id ActorID) Option[S, E, C] {
 // applied in order; later values for the same option win. The returned Actor
 // is already running and ready to receive events via [Actor.Send] or
 // [Actor.SendCtx].
-func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, opts ...Option[S, E, C]) *Actor[S, E, C] {
+func Start[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], initialContext C, opts ...Option[S, E, C]) *Actor[S, E, C] {
 	cfg := config[S, E, C]{mailboxSize: defaultMailboxSize}
 	for _, o := range opts {
 		o(&cfg)
@@ -152,6 +153,7 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 		active:      make(map[S]bool),
 		history:     make(map[S]S),
 		invocations: make(map[S]context.CancelFunc),
+		invokeGens:  make(map[S]uint64),
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
@@ -160,10 +162,12 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 	}
 
 	// Resolve all initial states (handling hierarchy and defaults)
+	a.mu.Lock()
 	a.enterState(context.Background(), m.Initial)
 
 	// Handle any transient transitions that fire immediately
-	a.handleAlways(context.Background())
+	a.handleAlwaysInternal(context.Background())
+	a.mu.Unlock()
 
 	a.wg.Add(1)
 	go a.loop()
@@ -189,7 +193,7 @@ func Start[S ~string, E ~string, C any](m *Machine[S, E, C], initialContext C, o
 //
 // The [ActorID] is resolved in priority order: [WithActorID] if supplied,
 // otherwise the ActorID stored in the snapshot.
-func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot[S, C], opts ...Option[S, E, C]) *Actor[S, E, C] {
+func Hydrate[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], snapshot Snapshot[S, C], opts ...Option[S, E, C]) *Actor[S, E, C] {
 	cfg := config[S, E, C]{mailboxSize: defaultMailboxSize}
 	for _, o := range opts {
 		o(&cfg)
@@ -226,6 +230,7 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 		active:      active,
 		history:     history,
 		invocations: make(map[S]context.CancelFunc),
+		invokeGens:  make(map[S]uint64),
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
@@ -234,9 +239,11 @@ func Hydrate[S ~string, E ~string, C any](m *Machine[S, E, C], snapshot Snapshot
 	}
 
 	// Restart background services for all active states
+	a.mu.Lock()
 	for sID := range active {
 		a.restartServices(context.Background(), sID)
 	}
+	a.mu.Unlock()
 
 	a.wg.Add(1)
 	go a.loop()
@@ -327,8 +334,8 @@ func (a *Actor[S, E, C]) maybeAutoStop() {
 //     event the actor had already begun processing. These run synchronously
 //     under the actor's write lock; Stop acquires that lock before signalling
 //     shutdown, so the in-flight transition completes first.
-//   - [InvokeDef] Src goroutines. Stop cancels their [context.Context] and
-//     waits for each Src function to return.
+//   - [InvokeDef] Func goroutines. Stop cancels their [context.Context] and
+//     waits for each Func function to return.
 //   - [Observer.OnInvokeCompleted] callbacks for each in-flight or cancelled
 //     invoke. They fire from inside the invoke goroutine immediately before
 //     the WaitGroup decrement.
@@ -344,7 +351,7 @@ func (a *Actor[S, E, C]) maybeAutoStop() {
 //   - Goroutines spawned by user code from inside an action, guard, or
 //     invoke (for example `go publishMetric(c)` inside an Assign action).
 //     The actor has no handle on them. If the work must finish before Stop
-//     returns, model it as an [InvokeDef] Src instead — Stop awaits invoke
+//     returns, model it as an [InvokeDef] Func instead — Stop awaits invoke
 //     goroutines.
 //   - [time.AfterFunc] callbacks for delayed transitions that were already
 //     firing when Stop ran. They safely no-op via the inactive-state check
@@ -361,6 +368,7 @@ func (a *Actor[S, E, C]) Stop() {
 			cancel()
 		}
 		a.invocations = make(map[S]context.CancelFunc)
+		a.invokeGens = make(map[S]uint64)
 
 		// Stop all timers
 		for _, timers := range a.timers {
@@ -369,12 +377,12 @@ func (a *Actor[S, E, C]) Stop() {
 			}
 		}
 		a.timers = make(map[S][]*time.Timer)
-		a.mu.Unlock()
 
 		// Signal shutdown. Senders parked in SendCtx's select wake on the
 		// stopped channel and return without delivering. The loop goroutine
 		// observes stopped at its next iteration and exits.
 		close(a.stopped)
+		a.mu.Unlock()
 
 		// Wait for the loop goroutine and every invoke goroutine to return
 		// before declaring shutdown complete.
@@ -391,21 +399,18 @@ func (a *Actor[S, E, C]) ID() ActorID {
 }
 
 // Context returns a thread-safe copy of the current context.
-// If C implements Cloner[C], it returns the result of c.Clone().
+// Thread safety is guaranteed by calling [Cloner.Clone] on the underlying context.
 func (a *Actor[S, E, C]) Context() C {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if cloner, ok := any(a.context).(Cloner[C]); ok {
-		return cloner.Clone()
-	}
-	return a.context
+	return a.context.Clone()
 }
 
 // restartServices triggers the background tasks (invokes/timers) for a state.
 // ctx is the request-scoped context that triggered entry into this state. It
 // is fired through OnInvokeStarted and is the parent of the cancellable
-// invokeCtx passed to invoke.Src, so any trace/span values on ctx propagate
-// to Src as well as to OnInvokeCompleted. Cancelling ctx cancels the invoke.
+// invokeCtx passed to invoke.Func, so any trace/span values on ctx propagate
+// to Func as well as to OnInvokeCompleted. Cancelling ctx cancels the invoke.
 func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 	stateDef := a.machine.States[id]
 	if stateDef == nil {
@@ -416,7 +421,34 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 	if stateDef.Invoke != nil {
 		invokeCtx, cancel := context.WithCancel(ctx)
 		a.invocations[id] = cancel
+
+		// Monotonically increment the generation token for this new state entry.
+		// Any mutate closures spawned for this invocation will capture this 'gen'
+		// value and will only commit mutations if this generation matches the
+		// currently active state entry generation in invokeGens.
+		a.nextGen++
+		gen := a.nextGen
+		a.invokeGens[id] = gen
+
+		snap := a.context.Clone()
 		start := time.Now()
+
+		mutate := func(fn func(C) C) {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			select {
+			case <-a.stopped:
+				return
+			default:
+			}
+			// Reject mutations if the state has exited or if a new entry has 
+			// superseded this invoke's generation (e.g. during A -> B -> A cycling).
+			if a.invokeGens[id] != gen {
+				return
+			}
+			a.context = fn(a.context)
+		}
+
 		a.observer.OnInvokeStarted(ctx, InvokeEvent[S, E, C]{
 			MachineID: a.machine.ID,
 			ActorID:   a.id,
@@ -424,13 +456,13 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 			Timestamp: start,
 		})
 		a.wg.Add(1)
-		go func(sID S, invoke *InvokeDef[S, E, C], c C) {
+		go func(sID S, invoke *InvokeDef[S, E, C], snap C, mutate func(func(C) C)) {
 			defer a.wg.Done()
-			err := invoke.Src(invokeCtx, c)
+			err := invoke.Func(invokeCtx, snap, mutate)
 			completedAt := time.Now()
 			// Report completion regardless of cancellation so observers can
 			// see cancelled invocations. Use invokeCtx.Err() to surface the
-			// cancellation reason when Src didn't return it explicitly.
+			// cancellation reason when Func didn't return it explicitly.
 			reportedErr := err
 			if reportedErr == nil && invokeCtx.Err() != nil {
 				reportedErr = invokeCtx.Err()
@@ -453,7 +485,7 @@ func (a *Actor[S, E, C]) restartServices(ctx context.Context, id S) {
 			if target != "" {
 				a.executeInternalTransition(context.WithoutCancel(invokeCtx), sID, target)
 			}
-		}(id, stateDef.Invoke, a.context)
+		}(id, stateDef.Invoke, snap, mutate)
 	}
 
 	// Start or restart delayed transitions
@@ -482,10 +514,7 @@ func (a *Actor[S, E, C]) Snapshot() Snapshot[S, C] {
 		history[k] = v
 	}
 
-	ctx := a.context
-	if cloner, ok := any(a.context).(Cloner[C]); ok {
-		ctx = cloner.Clone()
-	}
+	ctx := a.context.Clone()
 
 	return Snapshot[S, C]{
 		Active:  active,
@@ -786,6 +815,7 @@ func (a *Actor[S, E, C]) executeTransition(ctx context.Context, sourceID S, t *T
 			if cancel, ok := a.invocations[sID]; ok {
 				cancel()
 				delete(a.invocations, sID)
+				delete(a.invokeGens, sID)
 			}
 			if ts, ok := a.timers[sID]; ok {
 				for _, timer := range ts {
@@ -950,12 +980,6 @@ func (a *Actor[S, E, C]) isDescendant(childID, parentID S) bool {
 	return false
 }
 
-// handleAlways acquires a lock and checks for transient transitions.
-func (a *Actor[S, E, C]) handleAlways(ctx context.Context) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.handleAlwaysInternal(ctx)
-}
 
 // handleAlwaysInternal checks active states for Always transitions.
 // Must be called with a write lock.
