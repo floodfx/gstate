@@ -41,16 +41,16 @@ import (
 //     not affect the actor. If C implements [Cloner], that deep copy is used.
 //
 // To implement only a subset of the methods, embed [NopObserver].
-type Observer[S ~string, E ~string, C Cloner[C]] interface {
-	OnTransition(ctx context.Context, e TransitionEvent[S, E, C])
-	OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, C])
-	OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, C])
-	OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, C])
-	OnStateEntered(ctx context.Context, e StateEvent[S, E, C])
-	OnStateExited(ctx context.Context, e StateEvent[S, E, C])
-	OnActionExecuted(ctx context.Context, e ActionEvent[S, E, C])
-	OnEventReceived(ctx context.Context, e EventNotice[S, E, C])
-	OnEventDropped(ctx context.Context, e EventNotice[S, E, C])
+type Observer[S ~string, E ~string, D Cloner[D]] interface {
+	OnTransition(ctx context.Context, e TransitionEvent[S, E, D])
+	OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, D])
+	OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, D])
+	OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, D])
+	OnStateEntered(ctx context.Context, e StateEvent[S, E, D])
+	OnStateExited(ctx context.Context, e StateEvent[S, E, D])
+	OnActionExecuted(ctx context.Context, e ActionEvent[S, E, D])
+	OnEventReceived(ctx context.Context, e EventNotice[S, E, D])
+	OnEventDropped(ctx context.Context, e EventNotice[S, E, D])
 }
 
 // ActorID is the stable identifier for a running [Actor]. It is generated on
@@ -73,7 +73,7 @@ const (
 )
 
 // TransitionEvent is the payload for [Observer.OnTransition].
-type TransitionEvent[S ~string, E ~string, C Cloner[C]] struct {
+type TransitionEvent[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	From      S       `json:"from"`
@@ -81,13 +81,13 @@ type TransitionEvent[S ~string, E ~string, C Cloner[C]] struct {
 	// Event is the triggering event. Zero value when the transition fires from
 	// an Always, Delayed, or invoke-completion path.
 	Event     E         `json:"event,omitempty"`
-	Context   *C        `json:"context,omitempty"`
+	Context   *D        `json:"context,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
 // String renders the transition as "transition[ActorID]: From --Event--> To".
 // To is "<internal>" for transitions without a target state.
-func (e TransitionEvent[S, E, C]) String() string {
+func (e TransitionEvent[S, E, D]) String() string {
 	to := string(e.To)
 	if to == "" {
 		to = "<internal>"
@@ -98,7 +98,7 @@ func (e TransitionEvent[S, E, C]) String() string {
 // GuardEvent is the payload for [Observer.OnGuardEvaluated]. It is emitted
 // only when the transition defines a non-nil Guard, so the absence of an
 // event does not imply the absence of guard evaluation.
-type GuardEvent[S ~string, E ~string, C Cloner[C]] struct {
+type GuardEvent[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	State     S       `json:"state"`
@@ -106,18 +106,18 @@ type GuardEvent[S ~string, E ~string, C Cloner[C]] struct {
 	Event     E         `json:"event,omitempty"`
 	Target    S         `json:"target"`
 	Result    bool      `json:"result"`
-	Context   *C        `json:"context,omitempty"`
+	Context   *D        `json:"context,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
 // String renders the guard as "guard[ActorID]: State --Event[Target]: result=true|false".
-func (e GuardEvent[S, E, C]) String() string {
+func (e GuardEvent[S, E, D]) String() string {
 	return fmt.Sprintf("guard[%s]: %s --%s[%s]: result=%t", e.ActorID, e.State, e.Event, e.Target, e.Result)
 }
 
 // InvokeEvent is the payload for [Observer.OnInvokeStarted] and
 // [Observer.OnInvokeCompleted].
-type InvokeEvent[S ~string, E ~string, C Cloner[C]] struct {
+type InvokeEvent[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	State     S       `json:"state"`
@@ -132,7 +132,7 @@ type InvokeEvent[S ~string, E ~string, C Cloner[C]] struct {
 
 // String renders the invoke event as "invoke[ActorID]: state=... duration=... error=...".
 // Fields with zero values are omitted.
-func (e InvokeEvent[S, E, C]) String() string {
+func (e InvokeEvent[S, E, D]) String() string {
 	parts := []string{fmt.Sprintf("invoke[%s]: state=%s", e.ActorID, e.State)}
 	if e.Duration > 0 {
 		parts = append(parts, fmt.Sprintf("duration=%s", e.Duration))
@@ -146,8 +146,8 @@ func (e InvokeEvent[S, E, C]) String() string {
 // MarshalJSON renders Error as its Error() string (or null when nil) so the
 // payload round-trips through standard JSON tooling. All other fields use
 // their declared json tags.
-func (e InvokeEvent[S, E, C]) MarshalJSON() ([]byte, error) {
-	type alias InvokeEvent[S, E, C]
+func (e InvokeEvent[S, E, D]) MarshalJSON() ([]byte, error) {
+	type alias InvokeEvent[S, E, D]
 	var errStr *string
 	if e.Error != nil {
 		s := e.Error.Error()
@@ -160,22 +160,22 @@ func (e InvokeEvent[S, E, C]) MarshalJSON() ([]byte, error) {
 }
 
 // StateEvent is the payload for [Observer.OnStateEntered] and [Observer.OnStateExited].
-type StateEvent[S ~string, E ~string, C Cloner[C]] struct {
+type StateEvent[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string    `json:"machine_id"`
 	ActorID   ActorID   `json:"actor_id"`
 	State     S         `json:"state"`
-	Context   *C        `json:"context,omitempty"`
+	Context   *D        `json:"context,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
 // String renders the state event as "state[ActorID]: State".
-func (e StateEvent[S, E, C]) String() string {
+func (e StateEvent[S, E, D]) String() string {
 	return fmt.Sprintf("state[%s]: %s", e.ActorID, e.State)
 }
 
 // ActionEvent is the payload for [Observer.OnActionExecuted]. It is emitted
 // only when a transition has a non-nil Action.
-type ActionEvent[S ~string, E ~string, C Cloner[C]] struct {
+type ActionEvent[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	// State is the source state of the firing transition.
@@ -184,13 +184,13 @@ type ActionEvent[S ~string, E ~string, C Cloner[C]] struct {
 	Event E `json:"event,omitempty"`
 	// Target is the destination state ID, or zero for internal transitions.
 	Target    S         `json:"target,omitempty"`
-	Context   *C        `json:"context,omitempty"`
+	Context   *D        `json:"context,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
 // String renders the action as "action[ActorID]: State --Event--> Target"
 // (Target is "<internal>" when empty).
-func (e ActionEvent[S, E, C]) String() string {
+func (e ActionEvent[S, E, D]) String() string {
 	to := string(e.Target)
 	if to == "" {
 		to = "<internal>"
@@ -200,7 +200,7 @@ func (e ActionEvent[S, E, C]) String() string {
 
 // EventNotice is the payload for [Observer.OnEventReceived] and
 // [Observer.OnEventDropped].
-type EventNotice[S ~string, E ~string, C Cloner[C]] struct {
+type EventNotice[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	Event     E       `json:"event"`
@@ -212,7 +212,7 @@ type EventNotice[S ~string, E ~string, C Cloner[C]] struct {
 
 // String renders the event notice as "event[ActorID]: Event" or, when a
 // reason is set (i.e. drop notices), "event[ActorID]: Event reason=...".
-func (e EventNotice[S, E, C]) String() string {
+func (e EventNotice[S, E, D]) String() string {
 	if e.Reason != "" {
 		return fmt.Sprintf("event[%s]: %s reason=%s", e.ActorID, e.Event, e.Reason)
 	}
@@ -225,55 +225,55 @@ func (e EventNotice[S, E, C]) String() string {
 // observer that emits OpenTelemetry spans:
 //
 //	gstate.Start(m, ctx, m.WithObserver(
-//	    gstate.MultiObserver[S, E, C]{logger, recorder, tracer},
+//	    gstate.MultiObserver[S, E, D]{logger, recorder, tracer},
 //	))
 //
 // Members are dispatched in slice order; each member's callback completes
 // before the next runs. MultiObserver inherits the threading contract on
 // [Observer]: a slow or panicking member blocks the actor.
-type MultiObserver[S ~string, E ~string, C Cloner[C]] []Observer[S, E, C]
+type MultiObserver[S ~string, E ~string, D Cloner[D]] []Observer[S, E, D]
 
-func (m MultiObserver[S, E, C]) OnTransition(ctx context.Context, e TransitionEvent[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnTransition(ctx context.Context, e TransitionEvent[S, E, D]) {
 	for _, o := range m {
 		o.OnTransition(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, D]) {
 	for _, o := range m {
 		o.OnGuardEvaluated(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, D]) {
 	for _, o := range m {
 		o.OnInvokeStarted(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, D]) {
 	for _, o := range m {
 		o.OnInvokeCompleted(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnStateEntered(ctx context.Context, e StateEvent[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnStateEntered(ctx context.Context, e StateEvent[S, E, D]) {
 	for _, o := range m {
 		o.OnStateEntered(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnStateExited(ctx context.Context, e StateEvent[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnStateExited(ctx context.Context, e StateEvent[S, E, D]) {
 	for _, o := range m {
 		o.OnStateExited(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnActionExecuted(ctx context.Context, e ActionEvent[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnActionExecuted(ctx context.Context, e ActionEvent[S, E, D]) {
 	for _, o := range m {
 		o.OnActionExecuted(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnEventReceived(ctx context.Context, e EventNotice[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnEventReceived(ctx context.Context, e EventNotice[S, E, D]) {
 	for _, o := range m {
 		o.OnEventReceived(ctx, e)
 	}
 }
-func (m MultiObserver[S, E, C]) OnEventDropped(ctx context.Context, e EventNotice[S, E, C]) {
+func (m MultiObserver[S, E, D]) OnEventDropped(ctx context.Context, e EventNotice[S, E, D]) {
 	for _, o := range m {
 		o.OnEventDropped(ctx, e)
 	}
@@ -297,45 +297,45 @@ func (m MultiObserver[S, E, C]) OnEventDropped(ctx context.Context, e EventNotic
 //	actor := gstate.Start(machine, ctx, machine.WithObserver(obs))
 //	actor.Send(EventGo)
 //	<-ready
-func SignalObserver[S ~string, E ~string, C Cloner[C]](signal func()) Observer[S, E, C] {
-	return signalObserver[S, E, C]{signal: signal}
+func SignalObserver[S ~string, E ~string, D Cloner[D]](signal func()) Observer[S, E, D] {
+	return signalObserver[S, E, D]{signal: signal}
 }
 
-type signalObserver[S ~string, E ~string, C Cloner[C]] struct {
+type signalObserver[S ~string, E ~string, D Cloner[D]] struct {
 	signal func()
 }
 
-func (o signalObserver[S, E, C]) fire() {
+func (o signalObserver[S, E, D]) fire() {
 	if o.signal != nil {
 		o.signal()
 	}
 }
 
-func (o signalObserver[S, E, C]) OnTransition(context.Context, TransitionEvent[S, E, C]) {
+func (o signalObserver[S, E, D]) OnTransition(context.Context, TransitionEvent[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnGuardEvaluated(context.Context, GuardEvent[S, E, C]) {
+func (o signalObserver[S, E, D]) OnGuardEvaluated(context.Context, GuardEvent[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnInvokeStarted(context.Context, InvokeEvent[S, E, C]) {
+func (o signalObserver[S, E, D]) OnInvokeStarted(context.Context, InvokeEvent[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnInvokeCompleted(context.Context, InvokeEvent[S, E, C]) {
+func (o signalObserver[S, E, D]) OnInvokeCompleted(context.Context, InvokeEvent[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnStateEntered(context.Context, StateEvent[S, E, C]) {
+func (o signalObserver[S, E, D]) OnStateEntered(context.Context, StateEvent[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnStateExited(context.Context, StateEvent[S, E, C]) {
+func (o signalObserver[S, E, D]) OnStateExited(context.Context, StateEvent[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnActionExecuted(context.Context, ActionEvent[S, E, C]) {
+func (o signalObserver[S, E, D]) OnActionExecuted(context.Context, ActionEvent[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnEventReceived(context.Context, EventNotice[S, E, C]) {
+func (o signalObserver[S, E, D]) OnEventReceived(context.Context, EventNotice[S, E, D]) {
 	o.fire()
 }
-func (o signalObserver[S, E, C]) OnEventDropped(context.Context, EventNotice[S, E, C]) {
+func (o signalObserver[S, E, D]) OnEventDropped(context.Context, EventNotice[S, E, D]) {
 	o.fire()
 }
 
@@ -355,79 +355,79 @@ func (o signalObserver[S, E, C]) OnEventDropped(context.Context, EventNotice[S, 
 // value receivers. Do not mutate fields after installing on an actor.
 // Callback bodies must be non-blocking — see [Observer]'s threading
 // contract.
-type ObserverFuncs[S ~string, E ~string, C Cloner[C]] struct {
+type ObserverFuncs[S ~string, E ~string, D Cloner[D]] struct {
 	// AnyFunc fires for every lifecycle callback before the
 	// kind-specific field (if any). Useful as a single "something
 	// happened" hook for waiters and counters that still want the
 	// originating context.
 	AnyFunc func(context.Context)
 
-	TransitionFunc      func(context.Context, TransitionEvent[S, E, C])
-	GuardEvaluatedFunc  func(context.Context, GuardEvent[S, E, C])
-	InvokeStartedFunc   func(context.Context, InvokeEvent[S, E, C])
-	InvokeCompletedFunc func(context.Context, InvokeEvent[S, E, C])
-	StateEnteredFunc    func(context.Context, StateEvent[S, E, C])
-	StateExitedFunc     func(context.Context, StateEvent[S, E, C])
-	ActionExecutedFunc  func(context.Context, ActionEvent[S, E, C])
-	EventReceivedFunc   func(context.Context, EventNotice[S, E, C])
-	EventDroppedFunc    func(context.Context, EventNotice[S, E, C])
+	TransitionFunc      func(context.Context, TransitionEvent[S, E, D])
+	GuardEvaluatedFunc  func(context.Context, GuardEvent[S, E, D])
+	InvokeStartedFunc   func(context.Context, InvokeEvent[S, E, D])
+	InvokeCompletedFunc func(context.Context, InvokeEvent[S, E, D])
+	StateEnteredFunc    func(context.Context, StateEvent[S, E, D])
+	StateExitedFunc     func(context.Context, StateEvent[S, E, D])
+	ActionExecutedFunc  func(context.Context, ActionEvent[S, E, D])
+	EventReceivedFunc   func(context.Context, EventNotice[S, E, D])
+	EventDroppedFunc    func(context.Context, EventNotice[S, E, D])
 }
 
-func (o ObserverFuncs[S, E, C]) any(ctx context.Context) {
+func (o ObserverFuncs[S, E, D]) any(ctx context.Context) {
 	if o.AnyFunc != nil {
 		o.AnyFunc(ctx)
 	}
 }
 
-func (o ObserverFuncs[S, E, C]) OnTransition(ctx context.Context, e TransitionEvent[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnTransition(ctx context.Context, e TransitionEvent[S, E, D]) {
 	o.any(ctx)
 	if o.TransitionFunc != nil {
 		o.TransitionFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnGuardEvaluated(ctx context.Context, e GuardEvent[S, E, D]) {
 	o.any(ctx)
 	if o.GuardEvaluatedFunc != nil {
 		o.GuardEvaluatedFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnInvokeStarted(ctx context.Context, e InvokeEvent[S, E, D]) {
 	o.any(ctx)
 	if o.InvokeStartedFunc != nil {
 		o.InvokeStartedFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnInvokeCompleted(ctx context.Context, e InvokeEvent[S, E, D]) {
 	o.any(ctx)
 	if o.InvokeCompletedFunc != nil {
 		o.InvokeCompletedFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnStateEntered(ctx context.Context, e StateEvent[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnStateEntered(ctx context.Context, e StateEvent[S, E, D]) {
 	o.any(ctx)
 	if o.StateEnteredFunc != nil {
 		o.StateEnteredFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnStateExited(ctx context.Context, e StateEvent[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnStateExited(ctx context.Context, e StateEvent[S, E, D]) {
 	o.any(ctx)
 	if o.StateExitedFunc != nil {
 		o.StateExitedFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnActionExecuted(ctx context.Context, e ActionEvent[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnActionExecuted(ctx context.Context, e ActionEvent[S, E, D]) {
 	o.any(ctx)
 	if o.ActionExecutedFunc != nil {
 		o.ActionExecutedFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnEventReceived(ctx context.Context, e EventNotice[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnEventReceived(ctx context.Context, e EventNotice[S, E, D]) {
 	o.any(ctx)
 	if o.EventReceivedFunc != nil {
 		o.EventReceivedFunc(ctx, e)
 	}
 }
-func (o ObserverFuncs[S, E, C]) OnEventDropped(ctx context.Context, e EventNotice[S, E, C]) {
+func (o ObserverFuncs[S, E, D]) OnEventDropped(ctx context.Context, e EventNotice[S, E, D]) {
 	o.any(ctx)
 	if o.EventDroppedFunc != nil {
 		o.EventDroppedFunc(ctx, e)
@@ -443,17 +443,17 @@ func (o ObserverFuncs[S, E, C]) OnEventDropped(ctx context.Context, e EventNotic
 //	func (o *myObs) OnTransition(ctx context.Context, e gstate.TransitionEvent[MyState, MyEvent, MyContext]) {
 //	    // ...
 //	}
-type NopObserver[S ~string, E ~string, C Cloner[C]] struct{}
+type NopObserver[S ~string, E ~string, D Cloner[D]] struct{}
 
-func (NopObserver[S, E, C]) OnTransition(context.Context, TransitionEvent[S, E, C])  {}
-func (NopObserver[S, E, C]) OnGuardEvaluated(context.Context, GuardEvent[S, E, C])   {}
-func (NopObserver[S, E, C]) OnInvokeStarted(context.Context, InvokeEvent[S, E, C])   {}
-func (NopObserver[S, E, C]) OnInvokeCompleted(context.Context, InvokeEvent[S, E, C]) {}
-func (NopObserver[S, E, C]) OnStateEntered(context.Context, StateEvent[S, E, C])     {}
-func (NopObserver[S, E, C]) OnStateExited(context.Context, StateEvent[S, E, C])      {}
-func (NopObserver[S, E, C]) OnActionExecuted(context.Context, ActionEvent[S, E, C])  {}
-func (NopObserver[S, E, C]) OnEventReceived(context.Context, EventNotice[S, E, C])   {}
-func (NopObserver[S, E, C]) OnEventDropped(context.Context, EventNotice[S, E, C])    {}
+func (NopObserver[S, E, D]) OnTransition(context.Context, TransitionEvent[S, E, D])  {}
+func (NopObserver[S, E, D]) OnGuardEvaluated(context.Context, GuardEvent[S, E, D])   {}
+func (NopObserver[S, E, D]) OnInvokeStarted(context.Context, InvokeEvent[S, E, D])   {}
+func (NopObserver[S, E, D]) OnInvokeCompleted(context.Context, InvokeEvent[S, E, D]) {}
+func (NopObserver[S, E, D]) OnStateEntered(context.Context, StateEvent[S, E, D])     {}
+func (NopObserver[S, E, D]) OnStateExited(context.Context, StateEvent[S, E, D])      {}
+func (NopObserver[S, E, D]) OnActionExecuted(context.Context, ActionEvent[S, E, D])  {}
+func (NopObserver[S, E, D]) OnEventReceived(context.Context, EventNotice[S, E, D])   {}
+func (NopObserver[S, E, D]) OnEventDropped(context.Context, EventNotice[S, E, D])    {}
 
 // RecordedEvent is one entry in a [RecordingObserver]'s log. Payload holds the
 // matching typed payload struct (e.g. [TransitionEvent]); callers can either
@@ -480,49 +480,49 @@ func (r RecordedEvent) String() string {
 // The recorder satisfies [Observer] by overriding every method on the embedded
 // [NopObserver]; callers receive ordering identical to the engine's call
 // sequence.
-type RecordingObserver[S ~string, E ~string, C Cloner[C]] struct {
-	NopObserver[S, E, C]
+type RecordingObserver[S ~string, E ~string, D Cloner[D]] struct {
+	NopObserver[S, E, D]
 	mu     sync.Mutex
 	events []RecordedEvent
 }
 
-func (r *RecordingObserver[S, E, C]) append(kind string, payload any, ts time.Time) {
+func (r *RecordingObserver[S, E, D]) append(kind string, payload any, ts time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, RecordedEvent{Kind: kind, Payload: payload, Timestamp: ts})
 }
 
-func (r *RecordingObserver[S, E, C]) OnTransition(_ context.Context, e TransitionEvent[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnTransition(_ context.Context, e TransitionEvent[S, E, D]) {
 	r.append(KindTransition, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnGuardEvaluated(_ context.Context, e GuardEvent[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnGuardEvaluated(_ context.Context, e GuardEvent[S, E, D]) {
 	r.append(KindGuardEvaluated, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnInvokeStarted(_ context.Context, e InvokeEvent[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnInvokeStarted(_ context.Context, e InvokeEvent[S, E, D]) {
 	r.append(KindInvokeStarted, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnInvokeCompleted(_ context.Context, e InvokeEvent[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnInvokeCompleted(_ context.Context, e InvokeEvent[S, E, D]) {
 	r.append(KindInvokeCompleted, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnStateEntered(_ context.Context, e StateEvent[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnStateEntered(_ context.Context, e StateEvent[S, E, D]) {
 	r.append(KindStateEntered, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnStateExited(_ context.Context, e StateEvent[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnStateExited(_ context.Context, e StateEvent[S, E, D]) {
 	r.append(KindStateExited, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnActionExecuted(_ context.Context, e ActionEvent[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnActionExecuted(_ context.Context, e ActionEvent[S, E, D]) {
 	r.append(KindActionExecuted, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnEventReceived(_ context.Context, e EventNotice[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnEventReceived(_ context.Context, e EventNotice[S, E, D]) {
 	r.append(KindEventReceived, e, e.Timestamp)
 }
-func (r *RecordingObserver[S, E, C]) OnEventDropped(_ context.Context, e EventNotice[S, E, C]) {
+func (r *RecordingObserver[S, E, D]) OnEventDropped(_ context.Context, e EventNotice[S, E, D]) {
 	r.append(KindEventDropped, e, e.Timestamp)
 }
 
 // Events returns a copy of recorded events. If kinds are supplied, only entries
 // whose Kind matches one of them are returned, in original order.
-func (r *RecordingObserver[S, E, C]) Events(kinds ...string) []RecordedEvent {
+func (r *RecordingObserver[S, E, D]) Events(kinds ...string) []RecordedEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(kinds) == 0 {
@@ -544,58 +544,58 @@ func (r *RecordingObserver[S, E, C]) Events(kinds ...string) []RecordedEvent {
 }
 
 // Reset clears the recorded log.
-func (r *RecordingObserver[S, E, C]) Reset() {
+func (r *RecordingObserver[S, E, D]) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = nil
 }
 
 // Transitions returns every recorded [TransitionEvent].
-func (r *RecordingObserver[S, E, C]) Transitions() []TransitionEvent[S, E, C] {
-	return collect[TransitionEvent[S, E, C]](r, KindTransition)
+func (r *RecordingObserver[S, E, D]) Transitions() []TransitionEvent[S, E, D] {
+	return collect[TransitionEvent[S, E, D]](r, KindTransition)
 }
 
 // Guards returns every recorded [GuardEvent].
-func (r *RecordingObserver[S, E, C]) Guards() []GuardEvent[S, E, C] {
-	return collect[GuardEvent[S, E, C]](r, KindGuardEvaluated)
+func (r *RecordingObserver[S, E, D]) Guards() []GuardEvent[S, E, D] {
+	return collect[GuardEvent[S, E, D]](r, KindGuardEvaluated)
 }
 
 // StateEntered returns every recorded [StateEvent] for state entries.
-func (r *RecordingObserver[S, E, C]) StateEntered() []StateEvent[S, E, C] {
-	return collect[StateEvent[S, E, C]](r, KindStateEntered)
+func (r *RecordingObserver[S, E, D]) StateEntered() []StateEvent[S, E, D] {
+	return collect[StateEvent[S, E, D]](r, KindStateEntered)
 }
 
 // StateExited returns every recorded [StateEvent] for state exits.
-func (r *RecordingObserver[S, E, C]) StateExited() []StateEvent[S, E, C] {
-	return collect[StateEvent[S, E, C]](r, KindStateExited)
+func (r *RecordingObserver[S, E, D]) StateExited() []StateEvent[S, E, D] {
+	return collect[StateEvent[S, E, D]](r, KindStateExited)
 }
 
 // Actions returns every recorded [ActionEvent].
-func (r *RecordingObserver[S, E, C]) Actions() []ActionEvent[S, E, C] {
-	return collect[ActionEvent[S, E, C]](r, KindActionExecuted)
+func (r *RecordingObserver[S, E, D]) Actions() []ActionEvent[S, E, D] {
+	return collect[ActionEvent[S, E, D]](r, KindActionExecuted)
 }
 
 // InvokeStarted returns every recorded [InvokeEvent] for invoke starts.
-func (r *RecordingObserver[S, E, C]) InvokeStarted() []InvokeEvent[S, E, C] {
-	return collect[InvokeEvent[S, E, C]](r, KindInvokeStarted)
+func (r *RecordingObserver[S, E, D]) InvokeStarted() []InvokeEvent[S, E, D] {
+	return collect[InvokeEvent[S, E, D]](r, KindInvokeStarted)
 }
 
 // InvokeCompleted returns every recorded [InvokeEvent] for invoke completions.
-func (r *RecordingObserver[S, E, C]) InvokeCompleted() []InvokeEvent[S, E, C] {
-	return collect[InvokeEvent[S, E, C]](r, KindInvokeCompleted)
+func (r *RecordingObserver[S, E, D]) InvokeCompleted() []InvokeEvent[S, E, D] {
+	return collect[InvokeEvent[S, E, D]](r, KindInvokeCompleted)
 }
 
 // EventsReceived returns every recorded [EventNotice] for received events.
-func (r *RecordingObserver[S, E, C]) EventsReceived() []EventNotice[S, E, C] {
-	return collect[EventNotice[S, E, C]](r, KindEventReceived)
+func (r *RecordingObserver[S, E, D]) EventsReceived() []EventNotice[S, E, D] {
+	return collect[EventNotice[S, E, D]](r, KindEventReceived)
 }
 
 // EventsDropped returns every recorded [EventNotice] for dropped events.
-func (r *RecordingObserver[S, E, C]) EventsDropped() []EventNotice[S, E, C] {
-	return collect[EventNotice[S, E, C]](r, KindEventDropped)
+func (r *RecordingObserver[S, E, D]) EventsDropped() []EventNotice[S, E, D] {
+	return collect[EventNotice[S, E, D]](r, KindEventDropped)
 }
 
-func collect[T any, S ~string, E ~string, C Cloner[C]](r *RecordingObserver[S, E, C], kind string) []T {
+func collect[T any, S ~string, E ~string, D Cloner[D]](r *RecordingObserver[S, E, D], kind string) []T {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]T, 0)

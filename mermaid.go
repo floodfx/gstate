@@ -47,7 +47,7 @@ func MermaidFontSize(size int) MermaidOption {
 // ToMermaid converts a Machine to a Mermaid flowchart source string.
 // The output is plain Mermaid syntax; downstream consumers (GitHub README,
 // mermaid.live, mermaid-cli, IDE plugins) handle the actual rendering.
-func ToMermaid[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], opts ...MermaidOption) string {
+func ToMermaid[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], opts ...MermaidOption) string {
 	var cfg mermaidConfig
 	for _, o := range opts {
 		o(&cfg)
@@ -71,7 +71,7 @@ func ToMermaid[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], opts ...M
 	topLevel := sortedTopLevel(m)
 	hasAnyInvoke := false
 	hasInvokeError := false
-	walkStates(topLevel, func(s *StateDef[S, E, C]) {
+	walkStates(topLevel, func(s *StateDef[S, E, D]) {
 		if s.Invoke != nil {
 			hasAnyInvoke = true
 			if s.Invoke.OnError != "" {
@@ -100,18 +100,18 @@ func ToMermaid[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C], opts ...M
 	}
 
 	// Emit all transitions at the top level, in deterministic order.
-	walkStates(topLevel, func(s *StateDef[S, E, C]) {
+	walkStates(topLevel, func(s *StateDef[S, E, D]) {
 		emitTransitions(f, s)
 	})
 
 	return f.String()
 }
 
-func declareState[S ~string, E ~string, C Cloner[C]](
+func declareState[S ~string, E ~string, D Cloner[D]](
 	root *mm.Flowchart,
 	parent *mm.Subgraph,
-	def *StateDef[S, E, C],
-	m *Machine[S, E, C],
+	def *StateDef[S, E, D],
+	m *Machine[S, E, D],
 ) {
 	id := mermaidID(string(def.ID))
 	hasChildren := len(def.States) > 0
@@ -162,7 +162,7 @@ func newSubgraph(root *mm.Flowchart, parent *mm.Subgraph, id, label string) *mm.
 
 // buildStateLabel produces the visible label for an atomic state, embedding
 // entry/exit annotations when the state has Entry/Exit actions.
-func buildStateLabel[S ~string, E ~string, C Cloner[C]](def *StateDef[S, E, C], defaultLabel string) string {
+func buildStateLabel[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D], defaultLabel string) string {
 	hasEntry := len(def.Entry) > 0
 	hasExit := len(def.Exit) > 0
 	if !hasEntry && !hasExit {
@@ -186,7 +186,7 @@ func buildStateLabel[S ~string, E ~string, C Cloner[C]](def *StateDef[S, E, C], 
 	return label
 }
 
-func emitTransitions[S ~string, E ~string, C Cloner[C]](f *mm.Flowchart, def *StateDef[S, E, C]) {
+func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *StateDef[S, E, D]) {
 	from := mermaidID(string(def.ID))
 
 	// Event-driven transitions, in declaration order.
@@ -248,7 +248,7 @@ func emitTransitions[S ~string, E ~string, C Cloner[C]](f *mm.Flowchart, def *St
 	}
 }
 
-func transitionLabel[S ~string, E ~string, C Cloner[C]](event string, tr *TransitionDef[S, E, C]) string {
+func transitionLabel[S ~string, E ~string, D Cloner[D]](event string, tr *TransitionDef[S, E, D]) string {
 	label := event
 	if tr.Guard != nil {
 		gn := "guard"
@@ -263,8 +263,8 @@ func transitionLabel[S ~string, E ~string, C Cloner[C]](event string, tr *Transi
 	return label
 }
 
-func sortedTopLevel[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) []*StateDef[S, E, C] {
-	var result []*StateDef[S, E, C]
+func sortedTopLevel[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D]) []*StateDef[S, E, D] {
+	var result []*StateDef[S, E, D]
 	for _, s := range m.States {
 		if s.parent == "" {
 			result = append(result, s)
@@ -277,7 +277,7 @@ func sortedTopLevel[S ~string, E ~string, C Cloner[C]](m *Machine[S, E, C]) []*S
 }
 
 // walkStates walks states depth-first in sorted order.
-func walkStates[S ~string, E ~string, C Cloner[C]](states []*StateDef[S, E, C], fn func(*StateDef[S, E, C])) {
+func walkStates[S ~string, E ~string, D Cloner[D]](states []*StateDef[S, E, D], fn func(*StateDef[S, E, D])) {
 	for _, s := range states {
 		fn(s)
 		walkStates(sortedChildren(s), fn)

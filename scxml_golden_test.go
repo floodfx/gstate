@@ -15,7 +15,7 @@ var update = os.Getenv("UPDATE_GOLDEN") != ""
 func TestSCXMLGoldenExamples(t *testing.T) {
 	type testCase struct {
 		name string
-		m    any // *Machine[S,E,C]
+		m    any // *Machine[S, E, D]
 	}
 
 	tests := []testCase{
