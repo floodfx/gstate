@@ -23,7 +23,7 @@ func (c benchCtx) Clone() benchCtx {
 	return c
 }
 
-// benchCloneCtx implements Cloner for the context-snapshot benchmarks.
+// benchCloneCtx implements Cloner for the data-snapshot benchmarks.
 type benchCloneCtx struct {
 	Count int
 	Data  [64]byte // non-trivial payload to copy
