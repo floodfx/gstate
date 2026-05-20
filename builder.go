@@ -2,6 +2,7 @@ package gstate
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -43,6 +44,8 @@ func (m *MachineBuilder[S, E, C]) State(id S, fn func(*StateBuilder[S, E, C])) *
 }
 
 // Build finalizes the machine definition and returns an immutable Machine instance.
+// It performs a static-analysis validation pass and panics if any invalid state,
+// transition target, or invoke target is detected.
 func (m *MachineBuilder[S, E, C]) Build() *Machine[S, E, C] {
 	// Pre-compute metadata for all states
 	for id, state := range m.machine.States {
@@ -50,7 +53,70 @@ func (m *MachineBuilder[S, E, C]) Build() *Machine[S, E, C] {
 			m.computeMetadata(id, 0, []S{})
 		}
 	}
+
+	m.validate()
+
 	return m.machine
+}
+
+func (m *MachineBuilder[S, E, C]) validate() {
+	if m.machine.Initial != "" {
+		if _, ok := m.machine.States[m.machine.Initial]; !ok {
+			panic(fmt.Errorf("gstate: machine %q has invalid initial state: %q does not exist", m.machine.ID, m.machine.Initial))
+		}
+	}
+
+	for id, state := range m.machine.States {
+		// 1. For compound states, verify initial child is valid if defined
+		if state.Type == Compound && state.Initial != "" {
+			if _, ok := state.States[state.Initial]; !ok {
+				panic(fmt.Errorf("gstate: machine %q compound state %q has invalid initial state: %q is not a direct child state", m.machine.ID, id, state.Initial))
+			}
+		}
+
+		// 2. Verify all transitions specify a valid, existing state target
+		for event, transitions := range state.Transitions {
+			for _, t := range transitions {
+				if t.Target != "" {
+					if _, ok := m.machine.States[t.Target]; !ok {
+						panic(fmt.Errorf("gstate: machine %q state %q has invalid transition on event %q: target %q does not exist", m.machine.ID, id, event, t.Target))
+					}
+				}
+			}
+		}
+
+		// 3. Verify all always transitions specify a valid, existing state target
+		for _, t := range state.Always {
+			if t.Target != "" {
+				if _, ok := m.machine.States[t.Target]; !ok {
+					panic(fmt.Errorf("gstate: machine %q state %q has invalid Always transition: target %q does not exist", m.machine.ID, id, t.Target))
+				}
+			}
+		}
+
+		// 4. Verify all delayed transitions specify a valid, existing state target
+		for _, t := range state.Delayed {
+			if t.Target != "" {
+				if _, ok := m.machine.States[t.Target]; !ok {
+					panic(fmt.Errorf("gstate: machine %q state %q has invalid Delayed transition: target %q does not exist", m.machine.ID, id, t.Target))
+				}
+			}
+		}
+
+		// 5. Verify all invoke transitions specify valid, existing state targets
+		if state.Invoke != nil {
+			if state.Invoke.OnDone != "" {
+				if _, ok := m.machine.States[state.Invoke.OnDone]; !ok {
+					panic(fmt.Errorf("gstate: machine %q state %q has invalid Invoke OnDone target: %q does not exist", m.machine.ID, id, state.Invoke.OnDone))
+				}
+			}
+			if state.Invoke.OnError != "" {
+				if _, ok := m.machine.States[state.Invoke.OnError]; !ok {
+					panic(fmt.Errorf("gstate: machine %q state %q has invalid Invoke OnError target: %q does not exist", m.machine.ID, id, state.Invoke.OnError))
+				}
+			}
+		}
+	}
 }
 
 func (m *MachineBuilder[S, E, C]) computeMetadata(id S, depth int, path []S) {

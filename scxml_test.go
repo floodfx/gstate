@@ -865,6 +865,10 @@ func TestSCXMLMultipleInvokes(t *testing.T) {
 		State("b", func(s *StateBuilder[StateID, EventID, Context]) {
 			s.Invoke(nil, "done_b", "err_b")
 		}).
+		State("done_a", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		State("err_a", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		State("done_b", func(s *StateBuilder[StateID, EventID, Context]) {}).
+		State("err_b", func(s *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 
 	doc, err := ToSCXML(m)
