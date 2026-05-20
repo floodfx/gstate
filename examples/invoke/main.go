@@ -10,9 +10,9 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext struct{}
+type MyData struct{}
 
-func (c MyContext) Clone() MyContext {
+func (c MyData) Clone() MyData {
 	return c
 }
 
@@ -20,11 +20,11 @@ func main() {
 	// 1. Invoked Services are goroutines that represent external side effects.
 	// Common uses: fetching data, starting a timer, or running a background task.
 	// CRITICAL: They are automatically cancelled if the state is left.
-	machine := gstate.New[MyState, MyEvent, MyContext]("service_manager").
+	machine := gstate.New[MyState, MyEvent, MyData]("service_manager").
 		Initial("loading").
-		State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			// s.Invoke starts a new goroutine when we enter 'loading'.
-			s.Invoke(func(ctx context.Context, snap MyContext, mutate func(func(MyContext) MyContext)) error {
+			s.Invoke(func(ctx context.Context, snap MyData, mutate func(func(MyData) MyData)) error {
 				fmt.Println("  [Invoke] Starting async work...")
 				select {
 				case <-time.After(100 * time.Millisecond):
@@ -39,26 +39,26 @@ func main() {
 			// Allow manual cancellation
 			s.On("CANCEL").GoTo("idle")
 		}).
-		State("success", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("success", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.Type(gstate.Final)
 		}).
-		State("error", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("error", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.Type(gstate.Final)
 		}).
-		State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			// A dead-end state to test cancellation
 		}).
 		Build()
 
 	fmt.Println("--- Test Case 1: Completion ---")
 	// Let the service finish naturally.
-	actor1 := gstate.Start(machine, MyContext{})
+	actor1 := gstate.Start(machine, MyData{})
 	time.Sleep(150 * time.Millisecond)
 	fmt.Printf("Final State: %s\n", actor1.State())
 
 	fmt.Println("\n--- Test Case 2: Cancellation ---")
 	// Interrupt the service by sending an event to change states.
-	actor2 := gstate.Start(machine, MyContext{})
+	actor2 := gstate.Start(machine, MyData{})
 	time.Sleep(20 * time.Millisecond)
 
 	fmt.Println("Action: Sending CANCEL event...")

@@ -9,24 +9,24 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext struct{}
+type MyData struct{}
 
-func (c MyContext) Clone() MyContext {
+func (c MyData) Clone() MyData {
 	return c
 }
 
 func main() {
 	// 1. Hierarchical States allow nesting state machines inside other states.
 	// This helps group logic and share behavior across states.
-	machine := gstate.New[MyState, MyEvent, MyContext]("hierarchy").
+	machine := gstate.New[MyState, MyEvent, MyData]("hierarchy").
 		Initial("parent").
-		State("parent", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("parent", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			// Set the default child to enter when 'parent' is entered.
 			s.Initial("child1")
 
 			// Actions defined on a parent run for ALL entries into children.
-			s.Entry(func(c MyContext) MyContext { fmt.Println("[parent] Entering..."); return c })
-			s.Exit(func(c MyContext) MyContext { fmt.Println("[parent] Exiting..."); return c })
+			s.Entry(func(c MyData) MyData { fmt.Println("[parent] Entering..."); return c })
+			s.Exit(func(c MyData) MyData { fmt.Println("[parent] Exiting..."); return c })
 
 			// 2. Event Bubbling:
 			// If a child doesn't handle an event, it "bubbles up" to the parent.
@@ -34,25 +34,25 @@ func main() {
 			s.On("EXIT_ALL").GoTo("done")
 
 			// 3. Nested States (Sub-states)
-			s.State("child1", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-				s.Entry(func(c MyContext) MyContext { fmt.Println("  [child1] Entering..."); return c })
-				s.Exit(func(c MyContext) MyContext { fmt.Println("  [child1] Exiting..."); return c })
+			s.State("child1", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+				s.Entry(func(c MyData) MyData { fmt.Println("  [child1] Entering..."); return c })
+				s.Exit(func(c MyData) MyData { fmt.Println("  [child1] Exiting..."); return c })
 				s.On("TO_CHILD2").GoTo("child2")
 			})
 
-			s.State("child2", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-				s.Entry(func(c MyContext) MyContext { fmt.Println("  [child2] Entering..."); return c })
-				s.Exit(func(c MyContext) MyContext { fmt.Println("  [child2] Exiting..."); return c })
+			s.State("child2", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+				s.Entry(func(c MyData) MyData { fmt.Println("  [child2] Entering..."); return c })
+				s.Exit(func(c MyData) MyData { fmt.Println("  [child2] Exiting..."); return c })
 				s.On("TO_CHILD1").GoTo("child1")
 			})
 		}).
-		State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.Type(gstate.Final)
 		}).
 		Build()
 
 	fmt.Println("--- Starting Actor ---")
-	actor := gstate.Start(machine, MyContext{})
+	actor := gstate.Start(machine, MyData{})
 
 	// actor.States() returns ALL active states from root to leaf.
 	fmt.Printf("Initial States Stack: %v\n", actor.States())

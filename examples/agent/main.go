@@ -28,35 +28,35 @@ const (
 	EventPass    MyEvent = "PASS"
 )
 
-// MyContext holds the state of our autonomous agent.
-type MyContext struct {
+// MyData holds the state of our autonomous agent.
+type MyData struct {
 	Retries     int
 	FixAttempts int
 	RepoDir     string
 }
 
-func (c MyContext) Clone() MyContext {
+func (c MyData) Clone() MyData {
 	return c
 }
 
 func main() {
-	machine := gstate.New[MyState, MyEvent, MyContext]("agent").
+	machine := gstate.New[MyState, MyEvent, MyData]("agent").
 		Initial(StateInvestigating).
-		State(StateInvestigating, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
-			s.Invoke(func(ctx context.Context, snap MyContext, mutate func(func(MyContext) MyContext)) error {
+		State(StateInvestigating, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+			s.Invoke(func(ctx context.Context, snap MyData, mutate func(func(MyData) MyData)) error {
 				fmt.Println("-> [investigating] Running diagnostics...")
 				time.Sleep(100 * time.Millisecond)
 				return nil
 			}, StateApproving, StateDone)
 		}).
-		State(StateApproving, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State(StateApproving, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.On(EventYes).GoTo(StateFixing)
 			s.On(EventNo).GoTo(StateDone)
 		}).
-		State(StateFixing, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State(StateFixing, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.Always().
-				Guard(func(c MyContext) bool { return c.FixAttempts >= 2 }).
-				Assign(func(c MyContext) MyContext {
+				Guard(func(c MyData) bool { return c.FixAttempts >= 2 }).
+				Assign(func(c MyData) MyData {
 					fmt.Println("-> [fixing] Max fix attempts reached. Giving up.")
 					return c
 				}).
@@ -65,17 +65,17 @@ func main() {
 			s.On(EventSuccess).GoTo(StateVerifying)
 
 			s.On(EventRetry).
-				Assign(func(c MyContext) MyContext {
+				Assign(func(c MyData) MyData {
 					c.FixAttempts++
 					fmt.Printf("-> [fixing] Retry attempt %d\n", c.FixAttempts)
 					return c
 				}).
 				GoTo(StateInvestigating)
 		}).
-		State(StateVerifying, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State(StateVerifying, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.On(EventFail).
-				Guard(func(c MyContext) bool { return c.Retries < 2 }).
-				Assign(func(c MyContext) MyContext {
+				Guard(func(c MyData) bool { return c.Retries < 2 }).
+				Assign(func(c MyData) MyData {
 					c.Retries++
 					fmt.Printf("-> [verifying] Retry count: %d\n", c.Retries)
 					return c
@@ -85,9 +85,9 @@ func main() {
 			s.On(EventFail).GoTo(StateDone)
 			s.On(EventPass).GoTo(StateDone)
 		}).
-		State(StateDone, func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State(StateDone, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			s.Type(gstate.Final)
-			s.Entry(func(c MyContext) MyContext {
+			s.Entry(func(c MyData) MyData {
 				fmt.Println("-> [done] Agent workflow complete.")
 				return c
 			})
@@ -95,7 +95,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Agent Actor ---")
-	actor := gstate.Start(machine, MyContext{RepoDir: "./workspace"})
+	actor := gstate.Start(machine, MyData{RepoDir: "./workspace"})
 
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()

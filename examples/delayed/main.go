@@ -9,9 +9,9 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext struct{}
+type MyData struct{}
 
-func (c MyContext) Clone() MyContext {
+func (c MyData) Clone() MyData {
 	return c
 }
 
@@ -19,9 +19,9 @@ func main() {
 	// 1. Delayed Transitions are transitions that happen automatically
 	// after a specified time.time.Duration.
 	// This is commonly used for timeouts, heartbeats, or debouncing.
-	machine := gstate.New[MyState, MyEvent, MyContext]("timeout_demo").
+	machine := gstate.New[MyState, MyEvent, MyData]("timeout_demo").
 		Initial("waiting").
-		State("waiting", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("waiting", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			fmt.Println("[waiting] State entered. Starting 100ms timer...")
 
 			// If we stay in this state for 100ms, move to 'timeout'.
@@ -31,20 +31,20 @@ func main() {
 			// Define an event that could move us away before the timeout hits.
 			s.On("USER_ACTION").GoTo("other_state")
 		}).
-		State("timeout", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("timeout", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			fmt.Println("[timeout] The timer fired! Transitioned successfully.")
 		}).
-		State("other_state", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("other_state", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			fmt.Println("[other_state] Left 'waiting' before timeout.")
 		}).
 		Build()
 
 	fmt.Println("--- Test Case 1: Reaching the Timeout ---")
-	gstate.Start(machine, MyContext{})
+	gstate.Start(machine, MyData{})
 	time.Sleep(150 * time.Millisecond) // Let it time out
 
 	fmt.Println("\n--- Test Case 2: Escaping before Timeout ---")
-	actor2 := gstate.Start(machine, MyContext{})
+	actor2 := gstate.Start(machine, MyData{})
 	time.Sleep(20 * time.Millisecond) // Wait a tiny bit
 
 	fmt.Println("Action: Sending 'USER_ACTION' before 100ms is up...")

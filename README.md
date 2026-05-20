@@ -41,7 +41,7 @@ const (
     EventToggle MyEvent = "TOGGLE"
 )
 
-// Define a simple context that implements the Cloner interface
+// Define a simple data type that implements the Cloner interface
 type MyData struct{}
 
 func (d MyData) Clone() MyData {
@@ -59,7 +59,7 @@ machine := gstate.New[MyState, MyEvent, MyData]("toggle").
     Build()
 ```
 
-> **Try it:** [basics example](./examples/basics) — states, events, transitions, context, and entry/exit actions.
+> **Try it:** [basics example](./examples/basics) — states, events, transitions, data, and entry/exit actions.
 
 ---
 
@@ -75,7 +75,7 @@ The library uses three generic parameters: `[S ~string, E ~string, D Cloner[D]]`
 
 **Benefits:**
 - **No Typos**: Compilers will catch `actor.Send("TYPO")` if your event type is strictly defined.
-- **IDE Support**: Autocomplete works for states, events, and context fields.
+- **IDE Support**: Autocomplete works for states, events, and data fields.
 - **Safety**: Guards and Actions are verified at compile time to work with your specific data structure.
 
 ---
@@ -102,7 +102,7 @@ s.On("INCREMENT").
 
 To guarantee thread-safe read/write isolation when snapshotting or observing a running Actor, the Data type `D` must satisfy the `Cloner[D]` constraint.
 
-If your Context consists solely of value types (like `struct{ Count int }`), implementing `Clone()` is as simple as returning `c`:
+If your Data consists solely of value types (like `struct{ Count int }`), implementing `Clone()` is as simple as returning `c`:
 
 ```go
 func (d MyData) Clone() MyData {
@@ -110,7 +110,7 @@ func (d MyData) Clone() MyData {
 }
 ```
 
-If your Context contains reference types (pointers, slices, maps), you must perform a deep copy inside `Clone()` to ensure true isolation:
+If your data type contains reference types (pointers, slices, maps), you must perform a deep copy inside `Clone()` to ensure true isolation:
 
 ```go
 type MyData struct {
@@ -607,7 +607,7 @@ actor.Stop()
 
 ### Automatic stop on reaching a "done" state
 
-An actor whose machine transitions into a "done" top-level state stops itself automatically. The shutdown follows the same contract as calling `Stop()` explicitly (see above): in-flight invokes are cancelled and awaited, observers see the terminal transition before the actor goes away, and `Snapshot()` / `State()` / `States()` / `Context()` remain readable on the stopped actor.
+An actor whose machine transitions into a "done" top-level state stops itself automatically. The shutdown follows the same contract as calling `Stop()` explicitly (see above): in-flight invokes are cancelled and awaited, observers see the terminal transition before the actor goes away, and `Snapshot()` / `State()` / `States()` / `Data()` remain readable on the stopped actor.
 
 Auto-stop fires when the actor's top-level active state has reached "done" in the SCXML sense:
 
@@ -765,7 +765,7 @@ Also available:
 
 - **Sequential Mailbox (Channels)**: All events sent via `actor.Send(event)` are queued. A background goroutine processes them one by one, ensuring that state transitions and context updates are **strictly sequential**.
 - **Thread-Safe Access (RWMutex)**: Methods like `actor.State()`, `actor.States()`, `actor.Data()`, and `actor.Snapshot()` are safe to call concurrently. They use a read-lock to provide a consistent view of the actor.
-- **Asynchronous Integrity**: `Invoke` and `After` run in separate goroutines but their results are funneled back through the sequential logic to prevent data races on your Context.
+- **Asynchronous Integrity**: `Invoke` and `After` run in separate goroutines but their results are funneled back through the sequential logic to prevent data races on your data.
 
 ---
 
@@ -783,7 +783,7 @@ Each example has its own README with a Mermaid state diagram, a walkthrough of w
 
 | Example | Feature | Use Case |
 |---------|---------|----------|
-| [basics](./examples/basics) | States, transitions, context, entry/exit | Form validation, connection managers |
+| [basics](./examples/basics) | States, transitions, data, entry/exit | Form validation, connection managers |
 | [hierarchy](./examples/hierarchy) | Nested states, event bubbling | Wizards, multi-step flows |
 | [parallel](./examples/parallel) | Orthogonal regions | Media players, independent monitors |
 | [history](./examples/history) | Shallow/deep history | Pause/resume, settings panels |

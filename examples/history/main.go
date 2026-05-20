@@ -9,9 +9,9 @@ import (
 
 type MyState string
 type MyEvent string
-type MyContext struct{}
+type MyData struct{}
 
-func (c MyContext) Clone() MyContext {
+func (c MyData) Clone() MyData {
 	return c
 }
 
@@ -19,25 +19,25 @@ func main() {
 	// 1. History States allow a compound state to remember which of its children
 	// was active before the state was exited.
 	// This is useful for things like pausing a task and resuming exactly where you were.
-	machine := gstate.New[MyState, MyEvent, MyContext]("history_demo").
+	machine := gstate.New[MyState, MyEvent, MyData]("history_demo").
 		Initial("app").
-		State("app", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("app", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			// Set History to Shallow. It will remember the direct active child.
 			s.History(gstate.Shallow)
 			s.Initial("screen1")
 
-			s.State("screen1", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+			s.State("screen1", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 				s.On("SWITCH").GoTo("screen2")
 			})
 
-			s.State("screen2", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+			s.State("screen2", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 				s.On("SWITCH").GoTo("screen1")
 			})
 
 			// 2. An event that moves us COMPLETELY OUT of 'app'.
 			s.On("GO_IDLE").GoTo("idle")
 		}).
-		State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyContext]) {
+		State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 			// An event that moves us back into 'app'.
 			// Because 'app' has History enabled, it will bypass its 'Initial'
 			// state if there is a remembered state.
@@ -46,7 +46,7 @@ func main() {
 		Build()
 
 	fmt.Println("--- Starting Actor ---")
-	actor := gstate.Start(machine, MyContext{})
+	actor := gstate.Start(machine, MyData{})
 	fmt.Printf("Initial: %s\n", actor.State())
 
 	fmt.Println("\n--- Switching Screen to screen2 ---")
