@@ -30,22 +30,22 @@ func (c Data) Clone() Data {
 	return c
 }
 
-// loggingObserver embeds NopObserver and overrides just the methods we want
+// loggingObserver embeds BaseObserver and overrides just the methods we want
 // to surface in stdout. It is a typical shape: small, focused, free to ignore
 // most callbacks.
 type loggingObserver struct {
-	gstate.NopObserver[State, Event, Data]
+	gstate.BaseObserver[State, Event, Data]
 }
 
-func (o *loggingObserver) OnTransition(_ context.Context, e gstate.TransitionEvent[State, Event, Data]) {
+func (o *loggingObserver) OnTransition(_ context.Context, e *gstate.TransitionEvent[State, Event, Data]) {
 	fmt.Printf("[%s] %s --%s--> %s\n", e.ActorID, e.From, e.Event, e.To)
 }
 
-func (o *loggingObserver) OnInvokeStarted(_ context.Context, e gstate.InvokeEvent[State, Event, Data]) {
+func (o *loggingObserver) OnInvokeStarted(_ context.Context, e *gstate.InvokeEvent[State, Event, Data]) {
 	fmt.Printf("[%s] invoke started in %s\n", e.ActorID, e.State)
 }
 
-func (o *loggingObserver) OnInvokeCompleted(_ context.Context, e gstate.InvokeEvent[State, Event, Data]) {
+func (o *loggingObserver) OnInvokeCompleted(_ context.Context, e *gstate.InvokeEvent[State, Event, Data]) {
 	if e.Error != nil {
 		fmt.Printf("[%s] invoke in %s completed with error after %v: %v\n", e.ActorID, e.State, e.Duration, e.Error)
 		return
@@ -75,7 +75,7 @@ func main() {
 	rec := &gstate.RecordingObserver[State, Event, Data]{}
 
 	actor := gstate.Start(machine, Data{},
-		machine.WithObserver(gstate.MultiObserver[State, Event, Data]{logger, rec}),
+		machine.WithObservers(logger, rec),
 	)
 	defer actor.Stop()
 

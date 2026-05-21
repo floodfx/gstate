@@ -3,6 +3,7 @@ package gstate
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -55,11 +56,38 @@ func pingPongMachine() *Machine[benchState, benchEvent, benchCtx] {
 		Build()
 }
 
+// countingPingPongMachine builds a ping-pong loop that tracks transition counts
+// and transitions to a final "done" state once n transitions are reached.
+// Used for truly no-observer benchmarks.
+func countingPingPongMachine(n int) *Machine[benchState, benchEvent, benchCtx] {
+	return New[benchState, benchEvent, benchCtx]("bench-counting").
+		Initial(bPing).
+		State(bPing, func(s *StateBuilder[benchState, benchEvent, benchCtx]) {
+			s.Always().
+				Guard(func(c benchCtx) bool { return c.Count >= n }).
+				GoTo("done")
+			s.On(bEVPong).
+				Assign(func(c benchCtx) benchCtx { c.Count++; return c }).
+				GoTo(bPong)
+		}).
+		State(bPong, func(s *StateBuilder[benchState, benchEvent, benchCtx]) {
+			s.Always().
+				Guard(func(c benchCtx) bool { return c.Count >= n }).
+				GoTo("done")
+			s.On(bEVPing).
+				Assign(func(c benchCtx) benchCtx { c.Count++; return c }).
+				GoTo(bPing)
+		}).
+		State("done", func(s *StateBuilder[benchState, benchEvent, benchCtx]) {
+			s.Type(Final)
+		}).
+		Build()
+}
+
 // waitForTransitions sends n events alternating PONG/PING and waits for
 // each transition via an ObserverFuncs callback. The observer fires on
 // OnTransition which runs synchronously under the actor lock.
-// Extra observers are composed via MultiObserver so WithObserver is only
-// called once.
+// Extra observers are registered directly via WithObservers option.
 func waitForTransitions(b *testing.B, m *Machine[benchState, benchEvent, benchCtx], n int, extraObservers ...Observer[benchState, benchEvent, benchCtx]) {
 	b.Helper()
 
@@ -69,7 +97,7 @@ func waitForTransitions(b *testing.B, m *Machine[benchState, benchEvent, benchCt
 	target := n
 
 	waiter := ObserverFuncs[benchState, benchEvent, benchCtx]{
-		TransitionFunc: func(_ context.Context, _ TransitionEvent[benchState, benchEvent, benchCtx]) {
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {
 			mu.Lock()
 			count++
 			if count >= target {
@@ -83,15 +111,10 @@ func waitForTransitions(b *testing.B, m *Machine[benchState, benchEvent, benchCt
 		},
 	}
 
-	var opts []Option[benchState, benchEvent, benchCtx]
-	if len(extraObservers) == 0 {
-		opts = []Option[benchState, benchEvent, benchCtx]{m.WithObserver(waiter)}
-	} else {
-		all := make(MultiObserver[benchState, benchEvent, benchCtx], 0, len(extraObservers)+1)
-		all = append(all, waiter)
-		all = append(all, extraObservers...)
-		opts = []Option[benchState, benchEvent, benchCtx]{m.WithObserver(all)}
-	}
+	all := make([]Observer[benchState, benchEvent, benchCtx], 0, len(extraObservers)+1)
+	all = append(all, waiter)
+	all = append(all, extraObservers...)
+	opts := []Option[benchState, benchEvent, benchCtx]{m.WithObservers(all...)}
 
 	actor := Start(m, benchCtx{}, opts...)
 
@@ -111,7 +134,28 @@ func waitForTransitions(b *testing.B, m *Machine[benchState, benchEvent, benchCt
 // Phase 1: Engine Hot Path
 // ---------------------------------------------------------------------------
 
-func BenchmarkSendTransition_NoObserver(b *testing.B) {
+func BenchmarkSendTransition_TrulyNoObserver(b *testing.B) {
+	m := countingPingPongMachine(100)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		actor := Start(m, benchCtx{})
+		for j := 0; j < 100; j++ {
+			if j%2 == 0 {
+				actor.Send(bEVPong)
+			} else {
+				actor.Send(bEVPing)
+			}
+		}
+		for actor.State() != "done" {
+			runtime.Gosched()
+		}
+		actor.Stop()
+	}
+}
+
+func BenchmarkSendTransition_TransitionOnlyObserver(b *testing.B) {
 	m := pingPongMachine()
 
 	b.ReportAllocs()
@@ -120,6 +164,23 @@ func BenchmarkSendTransition_NoObserver(b *testing.B) {
 		waitForTransitions(b, m, 100)
 	}
 }
+
+func BenchmarkSendTransition_ThreeTransitionObservers(b *testing.B) {
+	m := pingPongMachine()
+	obs1 := ObserverFuncs[benchState, benchEvent, benchCtx]{
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {},
+	}
+	obs2 := ObserverFuncs[benchState, benchEvent, benchCtx]{
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		waitForTransitions(b, m, 100, obs1, obs2)
+	}
+}
+
 
 func BenchmarkSendTransition_RecordingObserver(b *testing.B) {
 	m := pingPongMachine()
@@ -132,13 +193,13 @@ func BenchmarkSendTransition_RecordingObserver(b *testing.B) {
 	}
 }
 
-func BenchmarkSendTransition_NopObserver(b *testing.B) {
+func BenchmarkSendTransition_BaseObserver(b *testing.B) {
 	m := pingPongMachine()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		nop := NopObserver[benchState, benchEvent, benchCtx]{}
+		nop := BaseObserver[benchState, benchEvent, benchCtx]{}
 		waitForTransitions(b, m, 100, nop)
 	}
 }
@@ -179,7 +240,7 @@ func BenchmarkContextSnapshot_Cloner(b *testing.B) {
 	var done chan struct{}
 
 	waiter := ObserverFuncs[cState, cEvent, benchCloneCtx]{
-		TransitionFunc: func(_ context.Context, _ TransitionEvent[cState, cEvent, benchCloneCtx]) {
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[cState, cEvent, benchCloneCtx]) {
 			mu.Lock()
 			count++
 			if count >= 100 {
@@ -201,7 +262,7 @@ func BenchmarkContextSnapshot_Cloner(b *testing.B) {
 		done = make(chan struct{})
 		mu.Unlock()
 
-		actor := Start(m, benchCloneCtx{}, m.WithObserver(waiter))
+		actor := Start(m, benchCloneCtx{}, m.WithObservers(waiter))
 		for j := 0; j < 100; j++ {
 			if j%2 == 0 {
 				actor.Send(bEVPong)
@@ -311,7 +372,7 @@ func benchHierarchy(b *testing.B, m *Machine[benchState, benchEvent, benchCtx]) 
 	done := make(chan struct{})
 
 	waiter := ObserverFuncs[benchState, benchEvent, benchCtx]{
-		TransitionFunc: func(_ context.Context, _ TransitionEvent[benchState, benchEvent, benchCtx]) {
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {
 			mu.Lock()
 			count++
 			if count >= n {
@@ -325,7 +386,7 @@ func benchHierarchy(b *testing.B, m *Machine[benchState, benchEvent, benchCtx]) 
 		},
 	}
 
-	actor := Start(m, benchCtx{}, m.WithObserver(waiter))
+	actor := Start(m, benchCtx{}, m.WithObservers(waiter))
 	for i := 0; i < n; i++ {
 		if i%2 == 0 {
 			actor.Send(swapEv)
@@ -395,7 +456,7 @@ func benchParallel(b *testing.B, m *Machine[benchState, benchEvent, benchCtx]) {
 
 	// Count transitions into the parallel state (GO) and back (BACK).
 	waiter := ObserverFuncs[benchState, benchEvent, benchCtx]{
-		TransitionFunc: func(_ context.Context, _ TransitionEvent[benchState, benchEvent, benchCtx]) {
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {
 			mu.Lock()
 			count++
 			if count >= n {
@@ -409,7 +470,7 @@ func benchParallel(b *testing.B, m *Machine[benchState, benchEvent, benchCtx]) {
 		},
 	}
 
-	actor := Start(m, benchCtx{}, m.WithObserver(waiter))
+	actor := Start(m, benchCtx{}, m.WithObservers(waiter))
 	for i := 0; i < n; i++ {
 		if i%2 == 0 {
 			actor.Send(goEv)
@@ -490,7 +551,7 @@ func benchAlwaysChain(b *testing.B, m *Machine[benchState, benchEvent, benchCtx]
 	done := make(chan struct{})
 
 	waiter := ObserverFuncs[benchState, benchEvent, benchCtx]{
-		TransitionFunc: func(_ context.Context, _ TransitionEvent[benchState, benchEvent, benchCtx]) {
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {
 			mu.Lock()
 			count++
 			if count >= totalTransitions {
@@ -504,7 +565,7 @@ func benchAlwaysChain(b *testing.B, m *Machine[benchState, benchEvent, benchCtx]
 		},
 	}
 
-	actor := Start(m, benchCtx{}, m.WithObserver(waiter))
+	actor := Start(m, benchCtx{}, m.WithObservers(waiter))
 	for r := 0; r < rounds; r++ {
 		actor.Send(goEv)
 		actor.Send(resetEv)
@@ -548,7 +609,7 @@ func BenchmarkInvokeStartCancel(b *testing.B) {
 		done := make(chan struct{})
 
 		waiter := ObserverFuncs[benchState, benchEvent, benchCtx]{
-			TransitionFunc: func(_ context.Context, _ TransitionEvent[benchState, benchEvent, benchCtx]) {
+			TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {
 				mu.Lock()
 				count++
 				if count >= rounds*2 {
@@ -562,7 +623,7 @@ func BenchmarkInvokeStartCancel(b *testing.B) {
 			},
 		}
 
-		actor := Start(m, benchCtx{}, m.WithObserver(waiter))
+		actor := Start(m, benchCtx{}, m.WithObservers(waiter))
 		for r := 0; r < rounds; r++ {
 			actor.Send(startEv)
 			actor.Send(cancelEv)
@@ -589,7 +650,7 @@ func BenchmarkSnapshot(b *testing.B) {
 		m := buildParallelMachine(4)
 		ch := make(chan struct{})
 		waiter := ObserverFuncs[benchState, benchEvent, benchCtx]{
-			TransitionFunc: func(_ context.Context, _ TransitionEvent[benchState, benchEvent, benchCtx]) {
+			TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {
 				select {
 				case <-ch:
 				default:
@@ -597,7 +658,7 @@ func BenchmarkSnapshot(b *testing.B) {
 				}
 			},
 		}
-		actor := Start(m, benchCtx{Count: 42}, m.WithObserver(waiter))
+		actor := Start(m, benchCtx{Count: 42}, m.WithObservers(waiter))
 		actor.Send("GO")
 		<-ch
 
@@ -629,7 +690,7 @@ func BenchmarkHydrate(b *testing.B) {
 		m := buildParallelMachine(4)
 		ch := make(chan struct{})
 		waiter := ObserverFuncs[benchState, benchEvent, benchCtx]{
-			TransitionFunc: func(_ context.Context, _ TransitionEvent[benchState, benchEvent, benchCtx]) {
+			TransitionFunc: func(_ context.Context, _ *TransitionEvent[benchState, benchEvent, benchCtx]) {
 				select {
 				case <-ch:
 				default:
@@ -637,7 +698,7 @@ func BenchmarkHydrate(b *testing.B) {
 				}
 			},
 		}
-		actor := Start(m, benchCtx{Count: 42}, m.WithObserver(waiter))
+		actor := Start(m, benchCtx{Count: 42}, m.WithObservers(waiter))
 		actor.Send("GO")
 		<-ch
 		snap := actor.Snapshot()
@@ -658,13 +719,23 @@ func BenchmarkHydrate(b *testing.B) {
 
 func BenchmarkSendTransition_ZeroAlloc(b *testing.B) {
 	// Verifies the no-observer hot path is allocation-free per event.
-	// We use testing.AllocsPerRun inside the benchmark to get a precise count.
-	m := pingPongMachine()
+	m := countingPingPongMachine(100)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		waitForTransitions(b, m, 100)
+		actor := Start(m, benchCtx{})
+		for j := 0; j < 100; j++ {
+			if j%2 == 0 {
+				actor.Send(bEVPong)
+			} else {
+				actor.Send(bEVPing)
+			}
+		}
+		for actor.State() != "done" {
+			runtime.Gosched()
+		}
+		actor.Stop()
 	}
 }
 

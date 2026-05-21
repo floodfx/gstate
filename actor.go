@@ -60,8 +60,17 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// can rely on a clean shutdown without leaked goroutines.
 	wg sync.WaitGroup
 
-	id       ActorID
-	observer Observer[S, E, D]
+	id ActorID
+
+	transitionObs      []TransitionObserver[S, E, D]
+	guardObs           []GuardObserver[S, E, D]
+	invokeStartedObs   []InvokeStartedObserver[S, E, D]
+	invokeCompletedObs []InvokeCompletedObserver[S, E, D]
+	stateEnteredObs    []StateEnteredObserver[S, E, D]
+	stateExitedObs     []StateExitedObserver[S, E, D]
+	actionObs          []ActionObserver[S, E, D]
+	eventReceivedObs   []EventReceivedObserver[S, E, D]
+	eventDroppedObs    []EventDroppedObserver[S, E, D]
 
 	// sortedActive caches the result of getSortedActiveStatesLocked.
 	// Nil means stale; rebuilt lazily on next call. Invalidated by
@@ -76,32 +85,23 @@ type envelope[E ~string] struct {
 	event E
 }
 
-// dataSnapshotPtr returns a pointer to a defensive copy of the actor's
-// current data. It is used when building observer payloads so observers
-// cannot accidentally mutate the actor's live state through a payload's
-// Data pointer.
-func (a *Actor[S, E, D]) dataSnapshotPtr() *D {
-	c := a.data.Clone()
-	return &c
-}
-
 // config holds the resolved configuration for an [Actor]. It is built by
 // applying [Option] values passed to [Start].
 type config[S ~string, E ~string, D Cloner[D]] struct {
 	mailboxSize int
-	observer    Observer[S, E, D]
+	observers   []Observer[S, E, D]
 	actorID     ActorID
 }
 
 // Option configures an [Actor] at [Start] or [Hydrate] time. Options are
 // constructed via methods on a typed [Machine] — [Machine.WithMailboxSize],
-// [Machine.WithObserver], [Machine.WithActorID] — which lets Go infer the
+// [Machine.WithObservers], [Machine.WithActorID] — which lets Go infer the
 // [S, E, C] type parameters from the machine so the call site needs no
 // annotations:
 //
 //	actor := gstate.Start(m, ctx,
 //	    m.WithMailboxSize(500),
-//	    m.WithObserver(obs),
+//	    m.WithObservers(obs),
 //	    m.WithActorID("worker-42"),
 //	)
 type Option[S ~string, E ~string, D Cloner[D]] func(*config[S, E, D])
@@ -113,12 +113,12 @@ func (m *Machine[S, E, D]) WithMailboxSize(n int) Option[S, E, D] {
 	return func(c *config[S, E, D]) { c.mailboxSize = n }
 }
 
-// WithObserver returns an [Option] that installs an [Observer] receiving
-// lifecycle callbacks for the actor. When omitted, a no-op observer is used.
-// The observer is invoked synchronously on the actor's event-processing
+// WithObservers returns an [Option] that installs [Observer] values receiving
+// lifecycle callbacks for the actor.
+// The observers are invoked synchronously on the actor's event-processing
 // goroutine; see [Observer] for the full threading contract.
-func (m *Machine[S, E, D]) WithObserver(obs Observer[S, E, D]) Option[S, E, D] {
-	return func(c *config[S, E, D]) { c.observer = obs }
+func (m *Machine[S, E, D]) WithObservers(obs ...Observer[S, E, D]) Option[S, E, D] {
+	return func(c *config[S, E, D]) { c.observers = obs }
 }
 
 // WithActorID returns an [Option] that overrides the auto-generated [ActorID]
@@ -140,9 +140,6 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 	if cfg.mailboxSize <= 0 {
 		cfg.mailboxSize = defaultMailboxSize
 	}
-	if cfg.observer == nil {
-		cfg.observer = NopObserver[S, E, D]{}
-	}
 	if cfg.actorID == "" {
 		cfg.actorID = ActorID(idGen())
 	}
@@ -158,8 +155,8 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
 		id:          cfg.actorID,
-		observer:    cfg.observer,
 	}
+	a.installObservers(cfg.observers)
 
 	// Resolve all initial states (handling hierarchy and defaults)
 	a.mu.Lock()
@@ -201,9 +198,6 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 	if cfg.mailboxSize <= 0 {
 		cfg.mailboxSize = defaultMailboxSize
 	}
-	if cfg.observer == nil {
-		cfg.observer = NopObserver[S, E, D]{}
-	}
 
 	active := make(map[S]bool)
 	for _, sID := range snapshot.Active {
@@ -235,8 +229,8 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
 		id:          id,
-		observer:    cfg.observer,
 	}
+	a.installObservers(cfg.observers)
 
 	// Restart background services for all active states
 	a.mu.Lock()
@@ -252,6 +246,110 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 	a.maybeAutoStop()
 	return a
 }
+
+func (a *Actor[S, E, D]) installObservers(observers []Observer[S, E, D]) {
+	for _, obs := range observers {
+		if obs == nil {
+			continue
+		}
+		if v, ok := obs.(TransitionObserver[S, E, D]); ok {
+			a.transitionObs = append(a.transitionObs, v)
+		}
+		if v, ok := obs.(GuardObserver[S, E, D]); ok {
+			a.guardObs = append(a.guardObs, v)
+		}
+		if v, ok := obs.(InvokeStartedObserver[S, E, D]); ok {
+			a.invokeStartedObs = append(a.invokeStartedObs, v)
+		}
+		if v, ok := obs.(InvokeCompletedObserver[S, E, D]); ok {
+			a.invokeCompletedObs = append(a.invokeCompletedObs, v)
+		}
+		if v, ok := obs.(StateEnteredObserver[S, E, D]); ok {
+			a.stateEnteredObs = append(a.stateEnteredObs, v)
+		}
+		if v, ok := obs.(StateExitedObserver[S, E, D]); ok {
+			a.stateExitedObs = append(a.stateExitedObs, v)
+		}
+		if v, ok := obs.(ActionObserver[S, E, D]); ok {
+			a.actionObs = append(a.actionObs, v)
+		}
+		if v, ok := obs.(EventReceivedObserver[S, E, D]); ok {
+			a.eventReceivedObs = append(a.eventReceivedObs, v)
+		}
+		if v, ok := obs.(EventDroppedObserver[S, E, D]); ok {
+			a.eventDroppedObs = append(a.eventDroppedObs, v)
+		}
+	}
+}
+
+func (a *Actor[S, E, D]) newTransitionEvent(from, to S, event E) *TransitionEvent[S, E, D] {
+	return &TransitionEvent[S, E, D]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		From:      from,
+		To:        to,
+		Event:     event,
+		Timestamp: time.Now(),
+		data:      a.data,
+	}
+}
+
+func (a *Actor[S, E, D]) newGuardEvent(state S, event E, target S, result bool) *GuardEvent[S, E, D] {
+	return &GuardEvent[S, E, D]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		State:     state,
+		Event:     event,
+		Target:    target,
+		Result:    result,
+		Timestamp: time.Now(),
+		data:      a.data,
+	}
+}
+
+func (a *Actor[S, E, D]) newInvokeEvent(state S, err error, d time.Duration) *InvokeEvent[S, E, D] {
+	return &InvokeEvent[S, E, D]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		State:     state,
+		Error:     err,
+		Duration:  d,
+		Timestamp: time.Now(),
+	}
+}
+
+func (a *Actor[S, E, D]) newStateEvent(state S) *StateEvent[S, E, D] {
+	return &StateEvent[S, E, D]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		State:     state,
+		Timestamp: time.Now(),
+		data:      a.data,
+	}
+}
+
+func (a *Actor[S, E, D]) newActionEvent(state S, event E, target S) *ActionEvent[S, E, D] {
+	return &ActionEvent[S, E, D]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		State:     state,
+		Event:     event,
+		Target:    target,
+		Timestamp: time.Now(),
+		data:      a.data,
+	}
+}
+
+func (a *Actor[S, E, D]) newEventNotice(event E, reason string) *EventNotice[S, E, D] {
+	return &EventNotice[S, E, D]{
+		MachineID: a.machine.ID,
+		ActorID:   a.id,
+		Event:     event,
+		Reason:    reason,
+		Timestamp: time.Now(),
+	}
+}
+
 
 // isStateDoneLocked returns true if the subtree rooted at sID has reached
 // its completion state per SCXML semantics. Must be called with a.mu held
@@ -449,12 +547,13 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 			a.data = fn(a.data)
 		}
 
-		a.observer.OnInvokeStarted(ctx, InvokeEvent[S, E, D]{
-			MachineID: a.machine.ID,
-			ActorID:   a.id,
-			State:     id,
-			Timestamp: start,
-		})
+		if len(a.invokeStartedObs) > 0 {
+			e := a.newInvokeEvent(id, nil, 0)
+			e.Timestamp = start
+			for _, o := range a.invokeStartedObs {
+				o.OnInvokeStarted(ctx, e)
+			}
+		}
 		a.wg.Add(1)
 		go func(sID S, invoke *InvokeDef[S, E, D], snap D, mutate func(func(D) D)) {
 			defer a.wg.Done()
@@ -467,14 +566,13 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 			if reportedErr == nil && invokeCtx.Err() != nil {
 				reportedErr = invokeCtx.Err()
 			}
-			a.observer.OnInvokeCompleted(invokeCtx, InvokeEvent[S, E, D]{
-				MachineID: a.machine.ID,
-				ActorID:   a.id,
-				State:     sID,
-				Error:     reportedErr,
-				Duration:  completedAt.Sub(start),
-				Timestamp: completedAt,
-			})
+			if len(a.invokeCompletedObs) > 0 {
+				e := a.newInvokeEvent(sID, reportedErr, completedAt.Sub(start))
+				e.Timestamp = completedAt
+				for _, o := range a.invokeCompletedObs {
+					o.OnInvokeCompleted(invokeCtx, e)
+				}
+			}
 			if invokeCtx.Err() != nil {
 				return // cancelled by state exit
 			}
@@ -681,12 +779,12 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.observer.OnEventReceived(ctx, EventNotice[S, E, D]{
-		MachineID: a.machine.ID,
-		ActorID:   a.id,
-		Event:     event,
-		Timestamp: time.Now(),
-	})
+	if len(a.eventReceivedObs) > 0 {
+		e := a.newEventNotice(event, "")
+		for _, o := range a.eventReceivedObs {
+			o.OnEventReceived(ctx, e)
+		}
+	}
 
 	activeStates := a.getSortedActiveStatesLocked()
 	// Bubble up: check transitions from deepest state to root
@@ -701,16 +799,12 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 			for _, t := range transitions {
 				if t.Guard != nil {
 					ok := t.Guard(a.data)
-					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, D]{
-						MachineID: a.machine.ID,
-						ActorID:   a.id,
-						State:     sID,
-						Event:     event,
-						Target:    t.Target,
-						Result:    ok,
-						Data:      a.dataSnapshotPtr(),
-						Timestamp: time.Now(),
-					})
+					if len(a.guardObs) > 0 {
+						e := a.newGuardEvent(sID, event, t.Target, ok)
+						for _, o := range a.guardObs {
+							o.OnGuardEvaluated(ctx, e)
+						}
+					}
 					if !ok {
 						continue
 					}
@@ -724,13 +818,12 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 	}
 
 	// No transition fired for this event.
-	a.observer.OnEventDropped(ctx, EventNotice[S, E, D]{
-		MachineID: a.machine.ID,
-		ActorID:   a.id,
-		Event:     event,
-		Reason:    "no_transition",
-		Timestamp: time.Now(),
-	})
+	if len(a.eventDroppedObs) > 0 {
+		e := a.newEventNotice(event, "no_transition")
+		for _, o := range a.eventDroppedObs {
+			o.OnEventDropped(ctx, e)
+		}
+	}
 }
 
 // executeTransition performs the state transition logic, including LCA resolution,
@@ -742,25 +835,19 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 	if t.Target == "" {
 		if t.Action != nil {
 			a.data = t.Action(a.data)
-			a.observer.OnActionExecuted(ctx, ActionEvent[S, E, D]{
-				MachineID: a.machine.ID,
-				ActorID:   a.id,
-				State:     sourceID,
-				Event:     event,
-				Target:    "",
-				Data:      a.dataSnapshotPtr(),
-				Timestamp: time.Now(),
-			})
+			if len(a.actionObs) > 0 {
+				e := a.newActionEvent(sourceID, event, "")
+				for _, o := range a.actionObs {
+					o.OnActionExecuted(ctx, e)
+				}
+			}
 		}
-		a.observer.OnTransition(ctx, TransitionEvent[S, E, D]{
-			MachineID: a.machine.ID,
-			ActorID:   a.id,
-			From:      sourceID,
-			To:        "",
-			Event:     event,
-			Data:      a.dataSnapshotPtr(),
-			Timestamp: time.Now(),
-		})
+		if len(a.transitionObs) > 0 {
+			e := a.newTransitionEvent(sourceID, "", event)
+			for _, o := range a.transitionObs {
+				o.OnTransition(ctx, e)
+			}
+		}
 		return
 	}
 
@@ -828,28 +915,23 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			}
 		}
 		delete(a.active, sID)
-		a.sortedActive = nil // invalidate cache
-		a.observer.OnStateExited(ctx, StateEvent[S, E, D]{
-			MachineID: a.machine.ID,
-			ActorID:   a.id,
-			State:     sID,
-			Data:      a.dataSnapshotPtr(),
-			Timestamp: time.Now(),
-		})
+		if len(a.stateExitedObs) > 0 {
+			e := a.newStateEvent(sID)
+			for _, o := range a.stateExitedObs {
+				o.OnStateExited(ctx, e)
+			}
+		}
 	}
 
 	// 3. Execute transition action (Assign)
 	if t.Action != nil {
 		a.data = t.Action(a.data)
-		a.observer.OnActionExecuted(ctx, ActionEvent[S, E, D]{
-			MachineID: a.machine.ID,
-			ActorID:   a.id,
-			State:     sourceID,
-			Event:     event,
-			Target:    t.Target,
-			Data:      a.dataSnapshotPtr(),
-			Timestamp: time.Now(),
-		})
+		if len(a.actionObs) > 0 {
+			e := a.newActionEvent(sourceID, event, t.Target)
+			for _, o := range a.actionObs {
+				o.OnActionExecuted(ctx, e)
+			}
+		}
 	}
 
 	// 4. Enter states from LCA (exclusive) down to target
@@ -877,15 +959,12 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 		}
 	}
 
-	a.observer.OnTransition(ctx, TransitionEvent[S, E, D]{
-		MachineID: a.machine.ID,
-		ActorID:   a.id,
-		From:      sourceID,
-		To:        t.Target,
-		Event:     event,
-		Data:      a.dataSnapshotPtr(),
-		Timestamp: time.Now(),
-	})
+	if len(a.transitionObs) > 0 {
+		e := a.newTransitionEvent(sourceID, t.Target, event)
+		for _, o := range a.transitionObs {
+			o.OnTransition(ctx, e)
+		}
+	}
 }
 
 // enterSingleState marks a state as active, runs its entry actions, and
@@ -902,13 +981,12 @@ func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 		a.data = action(a.data)
 	}
 
-	a.observer.OnStateEntered(ctx, StateEvent[S, E, D]{
-		MachineID: a.machine.ID,
-		ActorID:   a.id,
-		State:     id,
-		Data:      a.dataSnapshotPtr(),
-		Timestamp: time.Now(),
-	})
+	if len(a.stateEnteredObs) > 0 {
+		e := a.newStateEvent(id)
+		for _, o := range a.stateEnteredObs {
+			o.OnStateEntered(ctx, e)
+		}
+	}
 
 	a.restartServices(ctx, id)
 }
@@ -1012,16 +1090,12 @@ func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
 			for _, t := range stateDef.Always {
 				if t.Guard != nil {
 					ok := t.Guard(a.data)
-					a.observer.OnGuardEvaluated(ctx, GuardEvent[S, E, D]{
-						MachineID: a.machine.ID,
-						ActorID:   a.id,
-						State:     sID,
-						Event:     zero,
-						Target:    t.Target,
-						Result:    ok,
-						Data:      a.dataSnapshotPtr(),
-						Timestamp: time.Now(),
-					})
+					if len(a.guardObs) > 0 {
+						e := a.newGuardEvent(sID, zero, t.Target, ok)
+						for _, o := range a.guardObs {
+							o.OnGuardEvaluated(ctx, e)
+						}
+					}
 					if !ok {
 						continue
 					}

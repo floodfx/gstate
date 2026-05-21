@@ -15,27 +15,27 @@ func TestPayloadStringers(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"transition", TransitionEvent[StateID, EventID, Context]{ActorID: "id1", From: "a", To: "b", Event: "GO"}.String(),
+		{"transition", (&TransitionEvent[StateID, EventID, Context]{ActorID: "id1", From: "a", To: "b", Event: "GO"}).String(),
 			"transition[id1]: a --GO--> b"},
-		{"transition-internal", TransitionEvent[StateID, EventID, Context]{ActorID: "id1", From: "a", Event: "GO"}.String(),
+		{"transition-internal", (&TransitionEvent[StateID, EventID, Context]{ActorID: "id1", From: "a", Event: "GO"}).String(),
 			"transition[id1]: a --GO--> <internal>"},
-		{"guard-true", GuardEvent[StateID, EventID, Context]{ActorID: "id1", State: "a", Event: "GO", Target: "b", Result: true}.String(),
+		{"guard-true", (&GuardEvent[StateID, EventID, Context]{ActorID: "id1", State: "a", Event: "GO", Target: "b", Result: true}).String(),
 			"guard[id1]: a --GO[b]: result=true"},
-		{"guard-false", GuardEvent[StateID, EventID, Context]{ActorID: "id1", State: "a", Event: "GO", Target: "b", Result: false}.String(),
+		{"guard-false", (&GuardEvent[StateID, EventID, Context]{ActorID: "id1", State: "a", Event: "GO", Target: "b", Result: false}).String(),
 			"guard[id1]: a --GO[b]: result=false"},
-		{"state", StateEvent[StateID, EventID, Context]{ActorID: "id1", State: "a"}.String(),
+		{"state", (&StateEvent[StateID, EventID, Context]{ActorID: "id1", State: "a"}).String(),
 			"state[id1]: a"},
-		{"action", ActionEvent[StateID, EventID, Context]{ActorID: "id1", State: "a", Event: "GO", Target: "b"}.String(),
+		{"action", (&ActionEvent[StateID, EventID, Context]{ActorID: "id1", State: "a", Event: "GO", Target: "b"}).String(),
 			"action[id1]: a --GO--> b"},
-		{"invoke-started", InvokeEvent[StateID, EventID, Context]{ActorID: "id1", State: "loading"}.String(),
+		{"invoke-started", (&InvokeEvent[StateID, EventID, Context]{ActorID: "id1", State: "loading"}).String(),
 			"invoke[id1]: state=loading"},
-		{"invoke-completed", InvokeEvent[StateID, EventID, Context]{ActorID: "id1", State: "loading", Duration: 5 * time.Millisecond}.String(),
+		{"invoke-completed", (&InvokeEvent[StateID, EventID, Context]{ActorID: "id1", State: "loading", Duration: 5 * time.Millisecond}).String(),
 			"invoke[id1]: state=loading duration=5ms"},
-		{"invoke-error", InvokeEvent[StateID, EventID, Context]{ActorID: "id1", State: "loading", Duration: 5 * time.Millisecond, Error: errors.New("boom")}.String(),
+		{"invoke-error", (&InvokeEvent[StateID, EventID, Context]{ActorID: "id1", State: "loading", Duration: 5 * time.Millisecond, Error: errors.New("boom")}).String(),
 			"invoke[id1]: state=loading duration=5ms error=boom"},
-		{"event-received", EventNotice[StateID, EventID, Context]{ActorID: "id1", Event: "GO"}.String(),
+		{"event-received", (&EventNotice[StateID, EventID, Context]{ActorID: "id1", Event: "GO"}).String(),
 			"event[id1]: GO"},
-		{"event-dropped", EventNotice[StateID, EventID, Context]{ActorID: "id1", Event: "GO", Reason: "no_transition"}.String(),
+		{"event-dropped", (&EventNotice[StateID, EventID, Context]{ActorID: "id1", Event: "GO", Reason: "no_transition"}).String(),
 			"event[id1]: GO reason=no_transition"},
 	}
 	for _, tc := range cases {
@@ -48,7 +48,7 @@ func TestPayloadStringers(t *testing.T) {
 func TestRecordedEventStringDelegates(t *testing.T) {
 	r := RecordedEvent{
 		Kind:    KindTransition,
-		Payload: TransitionEvent[StateID, EventID, Context]{ActorID: "id1", From: "a", To: "b", Event: "GO"},
+		Payload: &TransitionEvent[StateID, EventID, Context]{ActorID: "id1", From: "a", To: "b", Event: "GO"},
 	}
 	if got := r.String(); got != "transition: transition[id1]: a --GO--> b" {
 		t.Errorf("RecordedEvent.String() = %q", got)
@@ -84,23 +84,20 @@ func TestInvokeEventJSONOmitsNilError(t *testing.T) {
 	}
 }
 
-// TestRecordingObserverDirectCalls verifies the recorder appends one entry per
-// callback and that both the typed accessors and the kind-filtered Events view
-// return the same data.
 func TestRecordingObserverDirectCalls(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
 	ctx := context.Background()
 	c := Context{Count: 1}
 
-	rec.OnEventReceived(ctx, EventNotice[StateID, EventID, Context]{Event: "GO"})
-	rec.OnGuardEvaluated(ctx, GuardEvent[StateID, EventID, Context]{State: "a", Target: "b", Result: true})
-	rec.OnStateExited(ctx, StateEvent[StateID, EventID, Context]{State: "a", Data: &c})
-	rec.OnActionExecuted(ctx, ActionEvent[StateID, EventID, Context]{State: "a", Target: "b", Event: "GO"})
-	rec.OnStateEntered(ctx, StateEvent[StateID, EventID, Context]{State: "b", Data: &c})
-	rec.OnTransition(ctx, TransitionEvent[StateID, EventID, Context]{From: "a", To: "b", Event: "GO"})
-	rec.OnInvokeStarted(ctx, InvokeEvent[StateID, EventID, Context]{State: "b"})
-	rec.OnInvokeCompleted(ctx, InvokeEvent[StateID, EventID, Context]{State: "b", Duration: time.Millisecond})
-	rec.OnEventDropped(ctx, EventNotice[StateID, EventID, Context]{Event: "NOPE", Reason: "no_transition"})
+	rec.OnEventReceived(ctx, &EventNotice[StateID, EventID, Context]{Event: "GO"})
+	rec.OnGuardEvaluated(ctx, &GuardEvent[StateID, EventID, Context]{State: "a", Target: "b", Result: true, data: c})
+	rec.OnStateExited(ctx, &StateEvent[StateID, EventID, Context]{State: "a", data: c})
+	rec.OnActionExecuted(ctx, &ActionEvent[StateID, EventID, Context]{State: "a", Target: "b", Event: "GO", data: c})
+	rec.OnStateEntered(ctx, &StateEvent[StateID, EventID, Context]{State: "b", data: c})
+	rec.OnTransition(ctx, &TransitionEvent[StateID, EventID, Context]{From: "a", To: "b", Event: "GO", data: c})
+	rec.OnInvokeStarted(ctx, &InvokeEvent[StateID, EventID, Context]{State: "b"})
+	rec.OnInvokeCompleted(ctx, &InvokeEvent[StateID, EventID, Context]{State: "b", Duration: time.Millisecond})
+	rec.OnEventDropped(ctx, &EventNotice[StateID, EventID, Context]{Event: "NOPE", Reason: "no_transition"})
 
 	all := rec.Events()
 	if len(all) != 9 {
@@ -159,36 +156,31 @@ func TestRecordingObserverDirectCalls(t *testing.T) {
 	}
 }
 
-// partialObs embeds NopObserver and overrides only OnTransition. This verifies
-// the embedding-for-partial-implementation pattern from the plan.
+// partialObs embeds BaseObserver and overrides only OnTransition.
 type partialObs struct {
-	NopObserver[StateID, EventID, Context]
+	BaseObserver[StateID, EventID, Context]
 	transitions int
 }
 
-func (p *partialObs) OnTransition(_ context.Context, _ TransitionEvent[StateID, EventID, Context]) {
+func (p *partialObs) OnTransition(_ context.Context, _ *TransitionEvent[StateID, EventID, Context]) {
 	p.transitions++
 }
 
-func TestNopObserverEmbeddingPartialImpl(t *testing.T) {
+func TestBaseObserverEmbeddingPartialImpl(t *testing.T) {
 	var obs Observer[StateID, EventID, Context] = &partialObs{}
-	ctx := context.Background()
 
-	// All nine methods must be callable without panic; only OnTransition records.
-	obs.OnEventReceived(ctx, EventNotice[StateID, EventID, Context]{})
-	obs.OnGuardEvaluated(ctx, GuardEvent[StateID, EventID, Context]{})
-	obs.OnStateExited(ctx, StateEvent[StateID, EventID, Context]{})
-	obs.OnActionExecuted(ctx, ActionEvent[StateID, EventID, Context]{})
-	obs.OnStateEntered(ctx, StateEvent[StateID, EventID, Context]{})
-	obs.OnTransition(ctx, TransitionEvent[StateID, EventID, Context]{})
-	obs.OnTransition(ctx, TransitionEvent[StateID, EventID, Context]{})
-	obs.OnInvokeStarted(ctx, InvokeEvent[StateID, EventID, Context]{})
-	obs.OnInvokeCompleted(ctx, InvokeEvent[StateID, EventID, Context]{})
-	obs.OnEventDropped(ctx, EventNotice[StateID, EventID, Context]{})
+	// Verify we can assert it to narrow interfaces.
+	if _, ok := obs.(TransitionObserver[StateID, EventID, Context]); !ok {
+		t.Error("expected obs to satisfy TransitionObserver")
+	}
+	if _, ok := obs.(EventReceivedObserver[StateID, EventID, Context]); ok {
+		t.Error("expected obs not to satisfy EventReceivedObserver")
+	}
 
 	p := obs.(*partialObs)
-	if p.transitions != 2 {
-		t.Errorf("OnTransition called %d times, want 2", p.transitions)
+	p.OnTransition(context.Background(), &TransitionEvent[StateID, EventID, Context]{})
+	if p.transitions != 1 {
+		t.Errorf("OnTransition called %d times, want 1", p.transitions)
 	}
 }
 
@@ -199,7 +191,7 @@ func TestRecordingObserverConcurrent(t *testing.T) {
 	done := make(chan struct{}, n)
 	for i := 0; i < n; i++ {
 		go func() {
-			rec.OnTransition(context.Background(), TransitionEvent[StateID, EventID, Context]{})
+			rec.OnTransition(context.Background(), &TransitionEvent[StateID, EventID, Context]{})
 			done <- struct{}{}
 		}()
 	}

@@ -6,7 +6,7 @@ import (
 )
 
 // TestMachineOptionsInferTypeParams confirms that the machine-method form of
-// option helpers (m.WithMailboxSize, m.WithObserver, m.WithActorID) works
+// option helpers (m.WithMailboxSize, m.WithObservers, m.WithActorID) works
 // without explicit [S, E, C] annotations at the call site. The test
 // expresses this by *being* the call site: if this file compiles, inference
 // works.
@@ -16,7 +16,7 @@ func TestMachineOptionsInferTypeParams(t *testing.T) {
 
 	a := Start(m, Context{},
 		m.WithMailboxSize(7),
-		m.WithObserver(rec),
+		m.WithObservers(rec),
 		m.WithActorID("worker-id"),
 	)
 	defer a.Stop()
@@ -27,8 +27,8 @@ func TestMachineOptionsInferTypeParams(t *testing.T) {
 	if cap(a.mailbox) != 7 {
 		t.Errorf("mailbox cap = %d, want 7", cap(a.mailbox))
 	}
-	if a.observer != rec {
-		t.Errorf("observer not installed via m.WithObserver")
+	if len(a.transitionObs) == 0 || a.transitionObs[0] != rec {
+		t.Errorf("observer not installed via m.WithObservers")
 	}
 }
 
@@ -40,7 +40,7 @@ func TestMachineOptionsBlockReceivedSignal(t *testing.T) {
 	m := tinyMachine()
 	barrier := &transitionBarrier{ch: make(chan struct{}, 1)}
 
-	a := Start(m, Context{}, m.WithObserver(barrier))
+	a := Start(m, Context{}, m.WithObservers(barrier))
 	defer a.Stop()
 	a.Send("GO")
 
@@ -48,11 +48,11 @@ func TestMachineOptionsBlockReceivedSignal(t *testing.T) {
 }
 
 type transitionBarrier struct {
-	NopObserver[StateID, EventID, Context]
+	BaseObserver[StateID, EventID, Context]
 	ch chan struct{}
 }
 
-func (b *transitionBarrier) OnTransition(context.Context, TransitionEvent[StateID, EventID, Context]) {
+func (b *transitionBarrier) OnTransition(context.Context, *TransitionEvent[StateID, EventID, Context]) {
 	select {
 	case b.ch <- struct{}{}:
 	default:

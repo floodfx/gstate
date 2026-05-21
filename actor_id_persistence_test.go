@@ -36,10 +36,10 @@ func TestHydrateAcceptsObserverOption(t *testing.T) {
 	a.Stop()
 
 	rec := &RecordingObserver[StateID, EventID, Context]{}
-	revived := Hydrate(m, snap, m.WithObserver(rec))
+	revived := Hydrate(m, snap, m.WithObservers(rec))
 	defer revived.Stop()
-	if revived.observer != rec {
-		t.Errorf("observer not installed via Hydrate; got %T", revived.observer)
+	if len(revived.transitionObs) == 0 || revived.transitionObs[0] != rec {
+		t.Errorf("observer not installed via Hydrate")
 	}
 }
 
@@ -57,7 +57,7 @@ func TestHydrateDoesNotFireOnStateEntered(t *testing.T) {
 	original.Stop()
 
 	rec := &RecordingObserver[StateID, EventID, Context]{}
-	revived := Hydrate(m, snap, m.WithObserver(rec))
+	revived := Hydrate(m, snap, m.WithObservers(rec))
 	defer revived.Stop()
 
 	if got := rec.StateEntered(); len(got) != 0 {

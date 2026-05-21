@@ -31,11 +31,11 @@ func buildExampleMachine() *gstate.Machine[myState, myEvent, myCtx] {
 // transitionBarrier is a channel-backed observer used by examples to wait
 // deterministically for OnTransition without time.Sleep / polling.
 type transitionBarrier struct {
-	gstate.NopObserver[myState, myEvent, myCtx]
+	gstate.BaseObserver[myState, myEvent, myCtx]
 	done chan struct{}
 }
 
-func (b *transitionBarrier) OnTransition(_ context.Context, _ gstate.TransitionEvent[myState, myEvent, myCtx]) {
+func (b *transitionBarrier) OnTransition(_ context.Context, _ *gstate.TransitionEvent[myState, myEvent, myCtx]) {
 	select {
 	case b.done <- struct{}{}:
 	default:
@@ -44,14 +44,14 @@ func (b *transitionBarrier) OnTransition(_ context.Context, _ gstate.TransitionE
 
 // ExampleRecordingObserver attaches a RecordingObserver to a tiny machine,
 // sends one event, and prints the kinds of lifecycle events recorded. A
-// transitionBarrier composed via MultiObserver synchronises the example so
+// transitionBarrier composed via WithObservers synchronises the example so
 // it doesn't need a sleep.
 func ExampleRecordingObserver() {
 	rec := &gstate.RecordingObserver[myState, myEvent, myCtx]{}
 	bar := &transitionBarrier{done: make(chan struct{}, 1)}
 	m := buildExampleMachine()
 	a := gstate.Start(m, myCtx{},
-		m.WithObserver(gstate.MultiObserver[myState, myEvent, myCtx]{rec, bar}),
+		m.WithObservers(rec, bar),
 	)
 	defer a.Stop()
 
@@ -71,24 +71,24 @@ func ExampleRecordingObserver() {
 	// transition
 }
 
-// loggingObserver embeds NopObserver and overrides only OnTransition. It
+// loggingObserver embeds BaseObserver and overrides only OnTransition. It
 // publishes formatted lines through a buffered channel so the example can
 // observe them safely without a sleep+racy read.
 type loggingObserver struct {
-	gstate.NopObserver[myState, myEvent, myCtx]
+	gstate.BaseObserver[myState, myEvent, myCtx]
 	lines chan string
 }
 
-func (l *loggingObserver) OnTransition(_ context.Context, e gstate.TransitionEvent[myState, myEvent, myCtx]) {
+func (l *loggingObserver) OnTransition(_ context.Context, e *gstate.TransitionEvent[myState, myEvent, myCtx]) {
 	l.lines <- fmt.Sprintf("%s --%s--> %s", e.From, e.Event, e.To)
 }
 
-// ExampleObserver demonstrates the NopObserver embedding pattern for
+// ExampleObserver demonstrates the BaseObserver embedding pattern for
 // implementing only a subset of Observer methods.
 func ExampleObserver() {
 	obs := &loggingObserver{lines: make(chan string, 4)}
 	m := buildExampleMachine()
-	a := gstate.Start(m, myCtx{}, m.WithObserver(obs))
+	a := gstate.Start(m, myCtx{}, m.WithObservers(obs))
 	defer a.Stop()
 
 	a.Send("GO")

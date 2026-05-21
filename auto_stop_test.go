@@ -195,7 +195,7 @@ func TestAutoStopDoesNotFireForParallelPartialDone(t *testing.T) {
 		Build()
 
 	dropBar := newKindBarrier(KindEventDropped, 1)
-	a := Start(m, Context{}, m.WithObserver(dropBar))
+	a := Start(m, Context{}, m.WithObservers(dropBar))
 	defer a.Stop()
 
 	// FINISH_A drives regionA to Final; regionB still in b_active.
@@ -240,7 +240,7 @@ func TestAutoStopDoesNotFireForCompoundWithNonFinalActiveChild(t *testing.T) {
 	// Send a NOOP and confirm it's dropped — proves the loop is alive
 	// at Start (no auto-stop happened during initial-chain entry).
 	dropBar := newKindBarrier(KindEventDropped, 1)
-	a := Start(m, Context{}, m.WithObserver(dropBar))
+	a := Start(m, Context{}, m.WithObservers(dropBar))
 	defer a.Stop()
 
 	if err := a.SendCtx(context.Background(), "NOOP"); err != nil {
@@ -262,7 +262,7 @@ func TestAutoStopDoesNotFireForCompoundWithNonFinalActiveChild(t *testing.T) {
 func TestAutoStopDoesNotFireForMachineWithoutFinal(t *testing.T) {
 	dropBar := newKindBarrier(KindEventDropped, 1)
 	m := tinyMachine()
-	a := Start(m, Context{}, m.WithObserver(dropBar))
+	a := Start(m, Context{}, m.WithObservers(dropBar))
 	defer a.Stop()
 
 	// Transition a -> b, then NOOP (no transition matches in b).
@@ -327,7 +327,7 @@ func TestAutoStopNoGoroutineLeak(t *testing.T) {
 // the terminal state.
 func TestAutoStopObserverSeesTerminalState(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
-	a := Start(finalMachine(), Context{}, finalMachine().WithObserver(rec))
+	a := Start(finalMachine(), Context{}, finalMachine().WithObservers(rec))
 	defer a.Stop()
 
 	if err := a.SendCtx(context.Background(), "FINISH"); err != nil {

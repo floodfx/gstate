@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/floodfx/gstate/compare/v0.2.2...v0.3.0) (2026-05-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **observer:** Refactored the monolithic `Observer` interface into specialized narrow interfaces and introduced lazy data cloning.
+  1. `Observer` interface is now a sealed *marker* (one unexported method) instead of a 9-method aggregate. Custom observers must embed `gstate.BaseObserver[S, E, D]`.
+  2. `NopObserver` is **removed**. Migrate by embedding `BaseObserver` and implementing only the narrow interfaces you need.
+  3. Observer callback methods now receive `*XEvent` instead of `XEvent`.
+  4. Payload `Data *D` field is removed and replaced by the `Data()` method on a pointer receiver. Custom `MarshalJSON` implementations preserve the JSON shape.
+  5. Nine new narrow per-callback interfaces (`TransitionObserver`, `GuardObserver`, etc.) are introduced so observers only listen to relevant lifecycle stages.
+  6. `MultiObserver` is **removed**. Variadic `WithObservers(obs ...Observer)` replaces it.
+  7. `WithObserver` is **renamed** to `WithObservers` (plural) and is now variadic.
+  8. `RecordingObserver` materializes `Data()` eagerly at record time, preserving snapshot semantics.
+  9. Multiple observers subscribing to the same callback kind share a single event-payload allocation and a single `Data()` clone per callback firing (via `sync.Once`).
+
 ## [0.2.2](https://github.com/floodfx/gstate/compare/v0.2.1...v0.2.2) (2026-05-19)
 
 

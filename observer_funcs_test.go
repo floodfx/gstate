@@ -14,18 +14,16 @@ var _ Observer[StateID, EventID, Context] = ObserverFuncs[StateID, EventID, Cont
 // it receives the right payload. Other callbacks fire on the actor but
 // no field is set for them, so they're silent.
 func TestObserverFuncsTypedOnlyFires(t *testing.T) {
-	got := make(chan TransitionEvent[StateID, EventID, Context], 1)
+	got := make(chan *TransitionEvent[StateID, EventID, Context], 1)
 	obs := ObserverFuncs[StateID, EventID, Context]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[StateID, EventID, Context]) {
+		TransitionFunc: func(_ context.Context, e *TransitionEvent[StateID, EventID, Context]) {
 			got <- e
 		},
 	}
 	bar := newKindBarrier(KindTransition, 1)
 
 	m := guardedMachine(true)
-	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{obs, bar},
-	))
+	a := Start(m, Context{}, m.WithObservers(obs, bar))
 	defer a.Stop()
 
 	a.Send("GO")
@@ -43,7 +41,7 @@ func TestObserverFuncsTypedOnlyFires(t *testing.T) {
 
 // TestObserverFuncsAnyFiresForEveryCallback sets only AnyFunc and
 // asserts it fires for every callback the actor produces. Compared
-// against a RecordingObserver in the same MultiObserver for ground
+// against a RecordingObserver in the same WithObservers list for ground
 // truth.
 func TestObserverFuncsAnyFiresForEveryCallback(t *testing.T) {
 	var count atomic.Int64
@@ -54,9 +52,7 @@ func TestObserverFuncsAnyFiresForEveryCallback(t *testing.T) {
 	bar := newKindBarrier(KindTransition, 1)
 
 	m := guardedMachine(true)
-	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{obs, rec, bar},
-	))
+	a := Start(m, Context{}, m.WithObservers(obs, rec, bar))
 	defer a.Stop()
 
 	a.Send("GO")
@@ -80,7 +76,7 @@ func TestObserverFuncsAnyFiresBeforeKindSpecific(t *testing.T) {
 			order = append(order, "any")
 			mu.Unlock()
 		},
-		TransitionFunc: func(_ context.Context, _ TransitionEvent[StateID, EventID, Context]) {
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[StateID, EventID, Context]) {
 			mu.Lock()
 			order = append(order, "transition")
 			mu.Unlock()
@@ -89,9 +85,7 @@ func TestObserverFuncsAnyFiresBeforeKindSpecific(t *testing.T) {
 	bar := newKindBarrier(KindTransition, 1)
 
 	m := guardedMachine(true)
-	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{obs, bar},
-	))
+	a := Start(m, Context{}, m.WithObservers(obs, bar))
 	defer a.Stop()
 
 	a.Send("GO")
@@ -121,18 +115,16 @@ func TestObserverFuncsAnyFiresBeforeKindSpecific(t *testing.T) {
 // and confirms no panic when other callbacks fire. EventReceivedFunc
 // must still receive its event.
 func TestObserverFuncsNilFieldsArentInvoked(t *testing.T) {
-	got := make(chan EventNotice[StateID, EventID, Context], 1)
+	got := make(chan *EventNotice[StateID, EventID, Context], 1)
 	obs := ObserverFuncs[StateID, EventID, Context]{
-		EventReceivedFunc: func(_ context.Context, e EventNotice[StateID, EventID, Context]) {
+		EventReceivedFunc: func(_ context.Context, e *EventNotice[StateID, EventID, Context]) {
 			got <- e
 		},
 	}
 	bar := newKindBarrier(KindTransition, 1)
 
 	m := guardedMachine(true)
-	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{obs, bar},
-	))
+	a := Start(m, Context{}, m.WithObservers(obs, bar))
 	defer a.Stop()
 
 	a.Send("GO")

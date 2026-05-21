@@ -28,7 +28,7 @@ func TestObserverConcurrentSendAndRead(t *testing.T) {
 		Build()
 
 	a := Start(m, Context{},
-		m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}),
+		m.WithObservers(rec, bar),
 		m.WithMailboxSize(1024),
 	)
 	defer a.Stop()
