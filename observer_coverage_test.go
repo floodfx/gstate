@@ -12,7 +12,7 @@ func TestOnTransitionFiresOncePerEventTransition(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
 	bar := newKindBarrier(KindTransition, 1)
 	m := tinyMachine()
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 
 	a.Send("GO")
@@ -36,7 +36,7 @@ func TestOnTransitionFiresOncePerAlwaysTransition(t *testing.T) {
 		State("b", func(_ *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 	<-bar.done
 
@@ -58,7 +58,7 @@ func TestOnTransitionFiresOncePerDelayedTransition(t *testing.T) {
 		State("b", func(_ *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 	<-bar.done
 
@@ -81,7 +81,7 @@ func TestOnTransitionFiresOncePerInvokeCompletion(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 	<-bar.done
 
@@ -104,7 +104,7 @@ func TestSelfTransitionEmitsExitAndEntry(t *testing.T) {
 		}).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 
 	a.Send("RETRY")
@@ -160,7 +160,7 @@ func TestParallelRegionsEmitCountsForBothRegionsOnEntry(t *testing.T) {
 	bar := newKindBarrier(KindStateEntered, 5)
 	m := parallelMachine()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 	<-bar.done
 
@@ -185,7 +185,7 @@ func TestParallelRegionEventTransitionFiresOneTransition(t *testing.T) {
 	transBar := newKindBarrier(KindTransition, 1)
 	m := parallelMachine()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, entryBar, transBar}))
+	a := Start(m, Context{}, m.WithObservers(rec, entryBar, transBar))
 	defer a.Stop()
 	<-entryBar.done
 

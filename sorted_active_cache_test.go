@@ -41,7 +41,7 @@ func TestSortedActiveCacheFlat(t *testing.T) {
 	done := make(chan struct{})
 
 	obs := ObserverFuncs[S, E, D]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
+		TransitionFunc: func(_ context.Context, e *TransitionEvent[S, E, D]) {
 			// OnTransition fires under the actor lock, so a.active is
 			// already updated. We can't call States() here (it takes
 			// RLock, we hold the write lock). Record e.To instead.
@@ -58,7 +58,7 @@ func TestSortedActiveCacheFlat(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObservers(obs))
 	for i := 0; i < len(expected); i++ {
 		actor.Send("GO")
 	}
@@ -110,7 +110,7 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 	const rounds = 6
 
 	obs := ObserverFuncs[S, E, D]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
+		TransitionFunc: func(_ context.Context, e *TransitionEvent[S, E, D]) {
 			mu.Lock()
 			transitions = append(transitions, stateSnap{from: e.From, to: e.To})
 			if len(transitions) >= rounds {
@@ -124,7 +124,7 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObservers(obs))
 
 	// Initial: [left, left.child]
 	states := actor.States()
@@ -191,7 +191,7 @@ func TestSortedActiveCacheParallel(t *testing.T) {
 	count := 0
 
 	obs := ObserverFuncs[S, E, D]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
+		TransitionFunc: func(_ context.Context, e *TransitionEvent[S, E, D]) {
 			count++
 			if count == 1 {
 				close(enteredPar)
@@ -202,7 +202,7 @@ func TestSortedActiveCacheParallel(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObservers(obs))
 
 	// idle -> par
 	actor.Send("GO")
@@ -263,7 +263,7 @@ func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 	var transitions []string
 
 	obs := ObserverFuncs[S, E, D]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
+		TransitionFunc: func(_ context.Context, e *TransitionEvent[S, E, D]) {
 			mu.Lock()
 			transitions = append(transitions, e.To)
 			// GO produces: s0, s1, s2, terminal (4 transitions)
@@ -280,7 +280,7 @@ func TestSortedActiveCacheAlwaysChain(t *testing.T) {
 		},
 	}
 
-	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObservers(obs))
 	actor.Send("GO")
 	actor.Send("RESET")
 	<-done
@@ -334,14 +334,14 @@ func TestSortedActiveStatesDeterministicTieBreaker(t *testing.T) {
 
 	enteredPar := make(chan struct{})
 	obs := ObserverFuncs[S, E, D]{
-		TransitionFunc: func(_ context.Context, e TransitionEvent[S, E, D]) {
+		TransitionFunc: func(_ context.Context, e *TransitionEvent[S, E, D]) {
 			if e.To == "par" {
 				close(enteredPar)
 			}
 		},
 	}
 
-	actor := Start(m, cacheCtx{}, m.WithObserver(obs))
+	actor := Start(m, cacheCtx{}, m.WithObservers(obs))
 	actor.Send("GO")
 	<-enteredPar
 

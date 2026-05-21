@@ -51,7 +51,7 @@ func TestStopWaitsForInvokeGoroutine(t *testing.T) {
 func TestSendAfterStopIsNoOp(t *testing.T) {
 	m := tinyMachine()
 	rec := &RecordingObserver[StateID, EventID, Context]{}
-	a := Start(m, Context{}, m.WithObserver(rec))
+	a := Start(m, Context{}, m.WithObservers(rec))
 
 	a.Stop()
 	rec.Reset() // discard any events the loop processed before Stop

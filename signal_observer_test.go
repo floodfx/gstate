@@ -6,8 +6,8 @@ import (
 )
 
 // TestSignalObserverFiresOnEachCallback asserts that every lifecycle
-// callback calls the supplied signal function. A RecordingObserver in
-// the same MultiObserver supplies the ground-truth event count so this
+// callback calls the supplied signal function. A RecordingObserver registered
+// alongside it supplies the ground-truth event count so this
 // test does not pin a specific callback inventory — that is the job of
 // the lifecycle hook tests (TestLifecycleHooksHappyPathOrder etc.).
 func TestSignalObserverFiresOnEachCallback(t *testing.T) {
@@ -19,9 +19,7 @@ func TestSignalObserverFiresOnEachCallback(t *testing.T) {
 	bar := newKindBarrier(KindTransition, 1)
 
 	m := guardedMachine(true)
-	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{sig, rec, bar},
-	))
+	a := Start(m, Context{}, m.WithObservers(sig, rec, bar))
 	defer a.Stop()
 
 	a.Send("GO")
@@ -40,9 +38,7 @@ func TestSignalObserverNilSignalIsNoOp(t *testing.T) {
 	bar := newKindBarrier(KindTransition, 1)
 
 	m := guardedMachine(true)
-	a := Start(m, Context{}, m.WithObserver(
-		MultiObserver[StateID, EventID, Context]{sig, bar},
-	))
+	a := Start(m, Context{}, m.WithObservers(sig, bar))
 	defer a.Stop()
 
 	a.Send("GO")
@@ -63,7 +59,7 @@ func TestSignalObserverWakesChannelDeterministically(t *testing.T) {
 	})
 
 	m := tinyMachine()
-	a := Start(m, Context{}, m.WithObserver(sig))
+	a := Start(m, Context{}, m.WithObservers(sig))
 	defer a.Stop()
 
 	// Start itself fires OnStateEntered, so ready is already pending.

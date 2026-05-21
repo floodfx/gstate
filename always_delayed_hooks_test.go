@@ -17,7 +17,7 @@ func TestAlwaysTransitionEmitsObserverCalls(t *testing.T) {
 		Build()
 
 	bar := newKindBarrier(KindTransition, 1)
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 
 	<-bar.done
@@ -46,11 +46,11 @@ func TestAlwaysTransitionEmitsObserverCalls(t *testing.T) {
 
 // ctxCapture records the ctx of every observer call into a per-kind channel.
 type ctxCapture struct {
-	NopObserver[StateID, EventID, Context]
+	BaseObserver[StateID, EventID, Context]
 	transitions chan context.Context
 }
 
-func (c *ctxCapture) OnTransition(ctx context.Context, _ TransitionEvent[StateID, EventID, Context]) {
+func (c *ctxCapture) OnTransition(ctx context.Context, _ *TransitionEvent[StateID, EventID, Context]) {
 	select {
 	case c.transitions <- ctx:
 	default:
@@ -67,7 +67,7 @@ func TestDelayedTransitionFiresWithBackgroundContext(t *testing.T) {
 		State("b", func(_ *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(cap))
+	a := Start(m, Context{}, m.WithObservers(cap))
 	defer a.Stop()
 
 	select {
@@ -100,7 +100,7 @@ func TestAlwaysChainedAfterEventReusesSendCtx(t *testing.T) {
 		State("b", func(_ *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(cap))
+	a := Start(m, Context{}, m.WithObservers(cap))
 	defer a.Stop()
 
 	type key struct{}

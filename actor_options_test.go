@@ -1,7 +1,6 @@
 package gstate
 
 import (
-	"context"
 	"testing"
 )
 
@@ -56,20 +55,18 @@ func TestWithMailboxSize(t *testing.T) {
 func TestWithObserverInstalled(t *testing.T) {
 	m := tinyMachine()
 	rec := &RecordingObserver[StateID, EventID, Context]{}
-	a := Start(m, Context{}, m.WithObserver(rec))
+	a := Start(m, Context{}, m.WithObservers(rec))
 	defer a.Stop()
-	if a.observer != rec {
-		t.Errorf("observer not installed; got %T", a.observer)
+	if len(a.transitionObs) == 0 || a.transitionObs[0] != rec {
+		t.Errorf("observer not installed")
 	}
 }
 
-func TestDefaultObserverIsNop(t *testing.T) {
+func TestDefaultObserversAreEmpty(t *testing.T) {
 	m := tinyMachine()
 	a := Start(m, Context{})
 	defer a.Stop()
-	if a.observer == nil {
-		t.Fatal("default observer must not be nil")
+	if len(a.transitionObs) != 0 {
+		t.Errorf("expected no transition observers, got %d", len(a.transitionObs))
 	}
-	// NopObserver is a value type; just confirm method calls don't panic.
-	a.observer.OnTransition(context.Background(), TransitionEvent[StateID, EventID, Context]{})
 }

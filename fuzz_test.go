@@ -218,7 +218,7 @@ func FuzzEventSequence(f *testing.F) {
 		}
 
 		rec := &RecordingObserver[StateID, EventID, Context]{}
-		a := Start(m, Context{}, m.WithObserver(rec))
+		a := Start(m, Context{}, m.WithObservers(rec))
 		defer a.Stop()
 
 		// SendCtx with a short timeout so a wedged mailbox doesn't hang

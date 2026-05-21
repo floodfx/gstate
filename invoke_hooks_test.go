@@ -25,7 +25,7 @@ func TestInvokeStartedAndCompletedSuccess(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 
 	<-srcStart        // Src is running
@@ -63,7 +63,7 @@ func TestInvokeCompletedOnError(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, bar}))
+	a := Start(m, Context{}, m.WithObservers(rec, bar))
 	defer a.Stop()
 
 	<-bar.done
@@ -80,19 +80,19 @@ func TestInvokeCompletedOnError(t *testing.T) {
 // invokeCtxCapture records the ctx passed to each invoke hook into per-hook
 // channels for deterministic synchronisation.
 type invokeCtxCapture struct {
-	NopObserver[StateID, EventID, Context]
+	BaseObserver[StateID, EventID, Context]
 	started   chan context.Context
 	completed chan context.Context
 }
 
-func (c *invokeCtxCapture) OnInvokeStarted(ctx context.Context, _ InvokeEvent[StateID, EventID, Context]) {
+func (c *invokeCtxCapture) OnInvokeStarted(ctx context.Context, _ *InvokeEvent[StateID, EventID, Context]) {
 	select {
 	case c.started <- ctx:
 	default:
 	}
 }
 
-func (c *invokeCtxCapture) OnInvokeCompleted(ctx context.Context, _ InvokeEvent[StateID, EventID, Context]) {
+func (c *invokeCtxCapture) OnInvokeCompleted(ctx context.Context, _ *InvokeEvent[StateID, EventID, Context]) {
 	select {
 	case c.completed <- ctx:
 	default:
@@ -118,7 +118,7 @@ func TestInvokeHooksPropagateSendCtx(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(cap))
+	a := Start(m, Context{}, m.WithObservers(cap))
 	defer a.Stop()
 
 	type key struct{}
@@ -154,7 +154,7 @@ func TestInvokeCompletedOnCancellation(t *testing.T) {
 		State("fail", func(s *StateBuilder[StateID, EventID, Context]) { s.Type(Final) }).
 		Build()
 
-	a := Start(m, Context{}, m.WithObserver(MultiObserver[StateID, EventID, Context]{rec, startedBar, completedBar}))
+	a := Start(m, Context{}, m.WithObservers(rec, startedBar, completedBar))
 	defer a.Stop()
 
 	<-startedBar.done

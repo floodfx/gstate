@@ -12,32 +12,32 @@ import (
 // mutatingObserver attempts to mutate Data through every payload it sees.
 // If dataSnapshotPtr does its job, the actor's own data is unaffected.
 type mutatingObserver struct {
-	NopObserver[StateID, EventID, Context]
+	BaseObserver[StateID, EventID, Context]
 }
 
-func (mutatingObserver) OnStateEntered(_ context.Context, e StateEvent[StateID, EventID, Context]) {
-	if e.Data != nil {
-		e.Data.Count = 9999
+func (mutatingObserver) OnStateEntered(_ context.Context, e *StateEvent[StateID, EventID, Context]) {
+	if e.Data() != nil {
+		e.Data().Count = 9999
 	}
 }
-func (mutatingObserver) OnStateExited(_ context.Context, e StateEvent[StateID, EventID, Context]) {
-	if e.Data != nil {
-		e.Data.Count = 9999
+func (mutatingObserver) OnStateExited(_ context.Context, e *StateEvent[StateID, EventID, Context]) {
+	if e.Data() != nil {
+		e.Data().Count = 9999
 	}
 }
-func (mutatingObserver) OnTransition(_ context.Context, e TransitionEvent[StateID, EventID, Context]) {
-	if e.Data != nil {
-		e.Data.Count = 9999
+func (mutatingObserver) OnTransition(_ context.Context, e *TransitionEvent[StateID, EventID, Context]) {
+	if e.Data() != nil {
+		e.Data().Count = 9999
 	}
 }
-func (mutatingObserver) OnGuardEvaluated(_ context.Context, e GuardEvent[StateID, EventID, Context]) {
-	if e.Data != nil {
-		e.Data.Count = 9999
+func (mutatingObserver) OnGuardEvaluated(_ context.Context, e *GuardEvent[StateID, EventID, Context]) {
+	if e.Data() != nil {
+		e.Data().Count = 9999
 	}
 }
-func (mutatingObserver) OnActionExecuted(_ context.Context, e ActionEvent[StateID, EventID, Context]) {
-	if e.Data != nil {
-		e.Data.Count = 9999
+func (mutatingObserver) OnActionExecuted(_ context.Context, e *ActionEvent[StateID, EventID, Context]) {
+	if e.Data() != nil {
+		e.Data().Count = 9999
 	}
 }
 
@@ -57,9 +57,7 @@ func TestObserverCannotMutateActorData(t *testing.T) {
 	rec := &RecordingObserver[StateID, EventID, Context]{}
 	bar := newKindBarrier(KindTransition, 1)
 	a := Start(m, Context{Count: 1},
-		m.WithObserver(
-			MultiObserver[StateID, EventID, Context]{mutatingObserver{}, rec, bar},
-		),
+		m.WithObservers(mutatingObserver{}, rec, bar),
 	)
 	defer a.Stop()
 
@@ -105,7 +103,7 @@ func TestObserverUsesClonerWhenAvailable(t *testing.T) {
 	rec := &RecordingObserver[cState, cEvent, cloningContext]{}
 	barrier := make(chan struct{}, 1)
 	signal := &cloneSignalObserver{ch: barrier}
-	a := Start(m, initial, m.WithObserver(MultiObserver[cState, cEvent, cloningContext]{rec, signal}))
+	a := Start(m, initial, m.WithObservers(rec, signal))
 	defer a.Stop()
 	a.Send("GO")
 
@@ -119,11 +117,11 @@ func TestObserverUsesClonerWhenAvailable(t *testing.T) {
 }
 
 type cloneSignalObserver struct {
-	NopObserver[cState, cEvent, cloningContext]
+	BaseObserver[cState, cEvent, cloningContext]
 	ch chan struct{}
 }
 
-func (c *cloneSignalObserver) OnTransition(context.Context, TransitionEvent[cState, cEvent, cloningContext]) {
+func (c *cloneSignalObserver) OnTransition(context.Context, *TransitionEvent[cState, cEvent, cloningContext]) {
 	select {
 	case c.ch <- struct{}{}:
 	default:

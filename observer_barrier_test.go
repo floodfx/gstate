@@ -10,13 +10,13 @@ import (
 // time.Sleep with a deterministic synchronisation primitive: tests do
 //
 //	bar := newKindBarrier(KindTransition, 1)
-//	a := Start(m, ctx, m.WithObserver(MultiObserver[...]{rec, bar}))
+//	a := Start(m, ctx, m.WithObservers(rec, bar))
 //	a.Send("GO")
 //	<-bar.done
 //
 // to block exactly until the actor has observed the expected lifecycle event.
 type kindBarrier struct {
-	NopObserver[StateID, EventID, Context]
+	BaseObserver[StateID, EventID, Context]
 	mu   sync.Mutex
 	kind string
 	want int
@@ -40,30 +40,30 @@ func (b *kindBarrier) tick(kind string) {
 	}
 }
 
-func (b *kindBarrier) OnTransition(context.Context, TransitionEvent[StateID, EventID, Context]) {
+func (b *kindBarrier) OnTransition(context.Context, *TransitionEvent[StateID, EventID, Context]) {
 	b.tick(KindTransition)
 }
-func (b *kindBarrier) OnGuardEvaluated(context.Context, GuardEvent[StateID, EventID, Context]) {
+func (b *kindBarrier) OnGuardEvaluated(context.Context, *GuardEvent[StateID, EventID, Context]) {
 	b.tick(KindGuardEvaluated)
 }
-func (b *kindBarrier) OnInvokeStarted(context.Context, InvokeEvent[StateID, EventID, Context]) {
+func (b *kindBarrier) OnInvokeStarted(context.Context, *InvokeEvent[StateID, EventID, Context]) {
 	b.tick(KindInvokeStarted)
 }
-func (b *kindBarrier) OnInvokeCompleted(context.Context, InvokeEvent[StateID, EventID, Context]) {
+func (b *kindBarrier) OnInvokeCompleted(context.Context, *InvokeEvent[StateID, EventID, Context]) {
 	b.tick(KindInvokeCompleted)
 }
-func (b *kindBarrier) OnStateEntered(context.Context, StateEvent[StateID, EventID, Context]) {
+func (b *kindBarrier) OnStateEntered(context.Context, *StateEvent[StateID, EventID, Context]) {
 	b.tick(KindStateEntered)
 }
-func (b *kindBarrier) OnStateExited(context.Context, StateEvent[StateID, EventID, Context]) {
+func (b *kindBarrier) OnStateExited(context.Context, *StateEvent[StateID, EventID, Context]) {
 	b.tick(KindStateExited)
 }
-func (b *kindBarrier) OnActionExecuted(context.Context, ActionEvent[StateID, EventID, Context]) {
+func (b *kindBarrier) OnActionExecuted(context.Context, *ActionEvent[StateID, EventID, Context]) {
 	b.tick(KindActionExecuted)
 }
-func (b *kindBarrier) OnEventReceived(context.Context, EventNotice[StateID, EventID, Context]) {
+func (b *kindBarrier) OnEventReceived(context.Context, *EventNotice[StateID, EventID, Context]) {
 	b.tick(KindEventReceived)
 }
-func (b *kindBarrier) OnEventDropped(context.Context, EventNotice[StateID, EventID, Context]) {
+func (b *kindBarrier) OnEventDropped(context.Context, *EventNotice[StateID, EventID, Context]) {
 	b.tick(KindEventDropped)
 }
