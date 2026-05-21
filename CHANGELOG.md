@@ -5,6 +5,27 @@
 
 ### ⚠ BREAKING CHANGES
 
+* implement safe invoke context mutations ([#41](https://github.com/floodfx/gstate/issues/41)) (#46)
+
+### Features
+
+* add build-time static validation for machine definitions ([#42](https://github.com/floodfx/gstate/issues/42)) ([1ee7055](https://github.com/floodfx/gstate/commit/1ee705562f1f69378018b722d3c71e03dd5a7f70))
+* implement safe invoke context mutations ([#41](https://github.com/floodfx/gstate/issues/41)) ([#46](https://github.com/floodfx/gstate/issues/46)) ([c1fdae4](https://github.com/floodfx/gstate/commit/c1fdae4a02c69bb0854639d898617395eb0af708))
+* mechanical rename of type parameter C to D ([58a72aa](https://github.com/floodfx/gstate/commit/58a72aa7304a582f77c8a7d54464eb2bc7740425))
+* rename Actor.Context to Actor.Data and internal fields ([bd54417](https://github.com/floodfx/gstate/commit/bd544179c40a3a70013b66bd00c9820c8e051b12))
+* rename Snapshot and event Context fields to Data ([1baed5d](https://github.com/floodfx/gstate/commit/1baed5d2de9d4b928aca9caecb3ea88396d1b87a))
+
+
+### Performance Improvements
+
+* **observer:** refactor observers to narrow interfaces and lazy evaluation ([3a7f868](https://github.com/floodfx/gstate/commit/3a7f8686b5f2c5bb10539e76d2cf6bd0f48f9b80))
+* optimize active state sorting using slices.SortFunc and add tie-breaker ([#43](https://github.com/floodfx/gstate/issues/43)) ([05201c4](https://github.com/floodfx/gstate/commit/05201c4f06888df04fc0fdaf9488a88c6efed817))
+
+## [0.3.0](https://github.com/floodfx/gstate/compare/v0.2.2...v0.3.0) (2026-05-21)
+
+
+### ⚠ BREAKING CHANGES
+
 * **observer:** Refactored the monolithic `Observer` interface into specialized narrow interfaces and introduced lazy data cloning.
   1. `Observer` interface is now a sealed *marker* (one unexported method) instead of a 9-method aggregate. Custom observers must embed `gstate.BaseObserver[S, E, D]`.
   2. `NopObserver` is **removed**. Migrate by embedding `BaseObserver` and implementing only the narrow interfaces you need.
