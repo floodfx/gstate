@@ -710,8 +710,6 @@ config:
     fontSize: 16px
 ---
 flowchart TB
-    classDef invokeService fill:#eef,stroke:#88c,stroke-width:1px
-    classDef invokeError stroke:#c33,color:#c33
     __start(("●"))
     __start --> idle
     calling_llm(["calling_llm"])
@@ -719,7 +717,7 @@ flowchart TB
     done((("done")))
     failed((("failed")))
     idle(["idle<br/>entry / startEngine<br/>exit / stopEngine"])
-    call_llm{"call_llm"}:::invokeService
+    call_llm{"call_llm"}
     calling_llm --> call_llm
     call_llm -->|"invoke.done"| checking_response
     call_llm -->|"invoke.error"| failed

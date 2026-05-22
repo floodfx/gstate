@@ -69,22 +69,6 @@ func ToMermaid[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], opts ...M
 	}
 
 	topLevel := sortedTopLevel(m)
-	hasAnyInvoke := false
-	hasInvokeError := false
-	walkStates(topLevel, func(s *StateDef[S, E, D]) {
-		if s.Invoke != nil {
-			hasAnyInvoke = true
-			if s.Invoke.OnError != "" {
-				hasInvokeError = true
-			}
-		}
-	})
-	if hasAnyInvoke {
-		f.ClassDef("invokeService", "fill:#eef,stroke:#88c,stroke-width:1px")
-	}
-	if hasInvokeError {
-		f.ClassDef("invokeError", "stroke:#c33,color:#c33")
-	}
 
 	// Initial pseudo-state + transition into the machine's initial state.
 	// The label "●" (U+25CF) gives the synthetic start node the standard
@@ -228,7 +212,7 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 			if diamondLabel != "" {
 				diamondID = mermaidID(diamondLabel)
 			}
-			f.Node(diamondID, diamondLabel, mm.ShapeDiamond).Class("invokeService")
+			f.Node(diamondID, diamondLabel, mm.ShapeDiamond)
 			f.Edge(from, diamondID, "", mm.EdgeSolid)
 			f.Edge(diamondID, mermaidID(string(def.Invoke.OnDone)), "invoke.done", mm.EdgeSolid)
 			f.Edge(diamondID, mermaidID(string(def.Invoke.OnError)), "invoke.error", mm.EdgeSolid)
