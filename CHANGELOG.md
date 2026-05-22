@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/floodfx/gstate/compare/v0.3.0...v0.3.1) (2026-05-22)
+
+
+### Bug Fixes
+
+* stop emitting custom CSS classes to support dark theme renderings ([#50](https://github.com/floodfx/gstate/issues/50)) ([33d897f](https://github.com/floodfx/gstate/commit/33d897f84406dabba6c85e9acc91fe2e646c349d))
+
 ## [0.3.0](https://github.com/floodfx/gstate/compare/v0.2.2...v0.3.0) (2026-05-21)
 
 
