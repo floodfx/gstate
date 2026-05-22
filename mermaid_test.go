@@ -529,7 +529,7 @@ func TestMermaidInvokeOnlyError(t *testing.T) {
 	assertContains(t, got, "failure")
 }
 
-func TestMermaidInvokeServiceClass(t *testing.T) {
+func TestMermaidNoCustomCSS(t *testing.T) {
 	m := New[StateID, EventID, Context]("invoke_class").
 		Initial("loading").
 		State("loading", func(s *StateBuilder[StateID, EventID, Context]) {
@@ -539,9 +539,13 @@ func TestMermaidInvokeServiceClass(t *testing.T) {
 		State("ko", func(s *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 	got := ToMermaid(m)
-	// Diamond should carry the invokeService class.
-	assertContains(t, got, "classDef invokeService")
-	assertContains(t, got, ":::invokeService")
+	// Custom classes should not be defined or attached to the diamond node.
+	assertNotContains(t, got, "classDef")
+	assertNotContains(t, got, ":::invoke")
+	// But the diamond shape and invoke edges must still be emitted correctly.
+	assertContains(t, got, "loading_invoke{")
+	assertContains(t, got, "invoke.done")
+	assertContains(t, got, "invoke.error")
 }
 
 // --- helpers ---
@@ -550,5 +554,12 @@ func assertContains(t *testing.T, got, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {
 		t.Errorf("output missing %q\n\ngot:\n%s", want, got)
+	}
+}
+
+func assertNotContains(t *testing.T, got, want string) {
+	t.Helper()
+	if strings.Contains(got, want) {
+		t.Errorf("output contains unexpected %q\n\ngot:\n%s", want, got)
 	}
 }
