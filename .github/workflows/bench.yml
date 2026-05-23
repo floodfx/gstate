@@ -37,7 +37,7 @@ jobs:
         run: just bench-trend
 
       - name: Upload bench output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-${{ github.sha }}
           path: bench.txt
