@@ -7,4 +7,4 @@ require (
 	go.uber.org/goleak v1.3.0
 )
 
-require github.com/sammcj/mermaid-check v0.0.4
+require github.com/sammcj/mermaid-check v0.2.0
