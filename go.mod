@@ -1,6 +1,6 @@
 module github.com/floodfx/gstate
 
-go 1.26.2
+go 1.26.6
 
 require (
 	github.com/jaevor/go-nanoid v1.4.0
