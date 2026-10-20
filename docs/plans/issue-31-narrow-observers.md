@@ -1,5 +1,7 @@
 # Plan: Narrow Observer interfaces + lazy Data (Options B + A) — Issue #31
 
+> Historical plan. The current runtime captures data-bearing observer snapshots at event creation under the actor lock. It pays one clone per emitted data-bearing payload even when no subscriber calls `Data()`. Unsubscribed kinds and metadata-only narrow observers still pay no clones. This supersedes the lazy zero-clone contract proposed below. See the README and `observer_history_test.go`.
+
 ## Context
 
 `Actor.dataSnapshotPtr()` (actor.go:83-86) calls `Cloner.Clone()` on every
