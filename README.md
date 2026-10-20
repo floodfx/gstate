@@ -337,6 +337,10 @@ To prevent silent runtime errors (such as transitions to non-existent states due
 
 If a machine definition violates any structural rules, `Build()` will fail-fast by **panicking** with a clear, descriptive message prefixed with `gstate:`.
 
+`builder.BuildWithError()` returns `(*Machine, error)` with a nil machine on validation failure. `builder.Validate()` returns an error without returning a machine. Both check the same rules as `Build()`, compute hierarchy metadata, and run no actions, guards, or invokes. When several errors exist, the first reported error is unspecified. The builder can be corrected and checked again before actors use it.
+
+These methods handle build-time validation errors. Empty or duplicate IDs still panic during `State(...)` declarations, and panics from user configuration callbacks propagate. `Build()` retains its existing signature and panics for invalid definitions.
+
 ### Validation Rules
 1. **Initial States**:
    - The top-level machine `Initial(state)` reference must point to a valid, declared state.

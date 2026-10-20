@@ -2,6 +2,7 @@ package gstate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -48,18 +49,38 @@ func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *
 // It performs a static-analysis validation pass and panics if any invalid state,
 // transition target, or invoke target is detected.
 func (m *MachineBuilder[S, E, D]) Build() *Machine[S, E, D] {
-	m.validate()
+	machine, err := m.BuildWithError()
+	if err != nil {
+		panic(err)
+	}
+	return machine
+}
 
-	// Pre-compute metadata for all states
+// BuildWithError validates and finalizes like Build, returning nil and an error
+// for an invalid definition. It does not run actions, guards, or invokes.
+// State declarations still panic immediately for empty or duplicate IDs, before
+// this method can be called. Panics in user-provided State callbacks propagate.
+func (m *MachineBuilder[S, E, D]) BuildWithError() (*Machine[S, E, D], error) {
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
+	return m.machine, nil
+}
+
+// Validate checks the definition and computes hierarchy metadata. It returns
+// the first validation error found, or nil. Error ordering is unspecified when
+// multiple defects exist. It runs no user callbacks. Like other builder methods,
+// it must not run concurrently with actor use of the machine.
+func (m *MachineBuilder[S, E, D]) Validate() error {
+	if err := m.validate(); err != nil {
+		return err
+	}
 	for id, state := range m.machine.States {
 		if state.parent == "" {
 			m.computeMetadata(id, 0, []S{})
 		}
 	}
-
-	m.validateRegions()
-
-	return m.machine
+	return m.validateRegions()
 }
 
 func (m *MachineBuilder[S, E, D]) reserveState(id S, state *StateDef[S, E, D]) {
@@ -73,69 +94,75 @@ func (m *MachineBuilder[S, E, D]) reserveState(id S, state *StateDef[S, E, D]) {
 }
 
 // Validate the tree before any recursive metadata traversal.
-func (m *MachineBuilder[S, E, D]) validateStructure() {
+func (m *MachineBuilder[S, E, D]) validateStructure() error {
 	initial := m.machine.States[m.machine.Initial]
 	if m.machine.Initial == "" {
-		panic("gstate: machine initial state is required")
+		return errors.New("gstate: machine initial state is required")
 	}
 	if initial != nil && initial.parent != "" {
-		panic("gstate: machine initial must be top-level")
+		return errors.New("gstate: machine initial must be top-level")
 	}
 	visited := make(map[S]bool)
-	var visit func(S)
-	visit = func(id S) {
+	var visit func(S) error
+	visit = func(id S) error {
 		sd := m.machine.States[id]
 		if sd == nil || visited[id] {
-			panic("gstate: invalid hierarchy or cycle")
+			return errors.New("gstate: invalid hierarchy or cycle")
 		}
 		visited[id] = true
 		for child, def := range sd.States {
 			if def == nil || def.parent != id || m.machine.States[child] != def {
-				panic("gstate: invalid child hierarchy")
+				return errors.New("gstate: invalid child hierarchy")
 			}
-			visit(child)
+			if err := visit(child); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
 	for id, sd := range m.machine.States {
 		if sd == nil || sd.ID != id || id == "" {
-			panic("gstate: invalid state definition")
+			return errors.New("gstate: invalid state definition")
 		}
 		switch sd.Type {
 		case Atomic, Final:
 			if len(sd.States) > 0 || sd.Initial != "" {
-				panic("gstate: atomic/final state cannot have children or initial")
+				return errors.New("gstate: atomic/final state cannot have children or initial")
 			}
 			if sd.Type == Final && (len(sd.Transitions) > 0 || len(sd.Always) > 0 || len(sd.Delayed) > 0 || sd.Invoke != nil) {
-				panic("gstate: final state cannot have outgoing transitions or services")
+				return errors.New("gstate: final state cannot have outgoing transitions or services")
 			}
 		case Compound, Parallel:
 			if len(sd.States) == 0 {
-				panic("gstate: compound/parallel state requires children")
+				return errors.New("gstate: compound/parallel state requires children")
 			}
 			if sd.Type == Compound && sd.Initial == "" {
-				panic("gstate: compound initial state is required")
+				return errors.New("gstate: compound initial state is required")
 			}
 			if sd.Type == Parallel && sd.Initial != "" {
-				panic("gstate: parallel state cannot specify an initial child")
+				return errors.New("gstate: parallel state cannot specify an initial child")
 			}
 		default:
-			panic("gstate: invalid state kind")
+			return errors.New("gstate: invalid state kind")
 		}
 		if sd.History < None || sd.History > Deep || (sd.History != None && sd.Type != Compound && sd.Type != Parallel) {
-			panic("gstate: invalid history kind")
+			return errors.New("gstate: invalid history kind")
 		}
 	}
 	for id, sd := range m.machine.States {
 		if sd.parent == "" {
-			visit(id)
+			if err := visit(id); err != nil {
+				return err
+			}
 		}
 	}
 	if len(visited) != len(m.machine.States) {
-		panic("gstate: disconnected or cyclic hierarchy")
+		return errors.New("gstate: disconnected or cyclic hierarchy")
 	}
+	return nil
 }
 
-func (m *MachineBuilder[S, E, D]) validateRegions() {
+func (m *MachineBuilder[S, E, D]) validateRegions() error {
 	for id, sd := range m.machine.States {
 		targets := []S{}
 		for _, ts := range sd.Transitions {
@@ -159,18 +186,21 @@ func (m *MachineBuilder[S, E, D]) validateRegions() {
 			tp := m.machine.States[target].path
 			for i, ancestor := range sd.path {
 				if i+1 < len(sd.path) && i+1 < len(tp) && tp[i] == ancestor && m.machine.States[ancestor].Type == Parallel && sd.path[i+1] != tp[i+1] {
-					panic(fmt.Errorf("gstate: cross-region transition from %q to %q is unsupported", id, target))
+					return fmt.Errorf("gstate: cross-region transition from %q to %q is unsupported", id, target)
 				}
 			}
 		}
 	}
+	return nil
 }
 
-func (m *MachineBuilder[S, E, D]) validate() {
-	m.validateStructure()
+func (m *MachineBuilder[S, E, D]) validate() error {
+	if err := m.validateStructure(); err != nil {
+		return err
+	}
 	if m.machine.Initial != "" {
 		if _, ok := m.machine.States[m.machine.Initial]; !ok {
-			panic(fmt.Errorf("gstate: machine %q has invalid initial state: %q does not exist", m.machine.ID, m.machine.Initial))
+			return fmt.Errorf("gstate: machine %q has invalid initial state: %q does not exist", m.machine.ID, m.machine.Initial)
 		}
 	}
 
@@ -178,7 +208,7 @@ func (m *MachineBuilder[S, E, D]) validate() {
 		// 1. For compound states, verify initial child is valid if defined
 		if state.Type == Compound && state.Initial != "" {
 			if _, ok := state.States[state.Initial]; !ok {
-				panic(fmt.Errorf("gstate: machine %q compound state %q has invalid initial state: %q is not a direct child state", m.machine.ID, id, state.Initial))
+				return fmt.Errorf("gstate: machine %q compound state %q has invalid initial state: %q is not a direct child state", m.machine.ID, id, state.Initial)
 			}
 		}
 
@@ -187,7 +217,7 @@ func (m *MachineBuilder[S, E, D]) validate() {
 			for _, t := range transitions {
 				if t.Target != "" {
 					if _, ok := m.machine.States[t.Target]; !ok {
-						panic(fmt.Errorf("gstate: machine %q state %q has invalid transition on event %q: target %q does not exist", m.machine.ID, id, event, t.Target))
+						return fmt.Errorf("gstate: machine %q state %q has invalid transition on event %q: target %q does not exist", m.machine.ID, id, event, t.Target)
 					}
 				}
 			}
@@ -197,7 +227,7 @@ func (m *MachineBuilder[S, E, D]) validate() {
 		for _, t := range state.Always {
 			if t.Target != "" {
 				if _, ok := m.machine.States[t.Target]; !ok {
-					panic(fmt.Errorf("gstate: machine %q state %q has invalid Always transition: target %q does not exist", m.machine.ID, id, t.Target))
+					return fmt.Errorf("gstate: machine %q state %q has invalid Always transition: target %q does not exist", m.machine.ID, id, t.Target)
 				}
 			}
 		}
@@ -206,7 +236,7 @@ func (m *MachineBuilder[S, E, D]) validate() {
 		for _, t := range state.Delayed {
 			if t.Target != "" {
 				if _, ok := m.machine.States[t.Target]; !ok {
-					panic(fmt.Errorf("gstate: machine %q state %q has invalid Delayed transition: target %q does not exist", m.machine.ID, id, t.Target))
+					return fmt.Errorf("gstate: machine %q state %q has invalid Delayed transition: target %q does not exist", m.machine.ID, id, t.Target)
 				}
 			}
 		}
@@ -215,16 +245,17 @@ func (m *MachineBuilder[S, E, D]) validate() {
 		if state.Invoke != nil {
 			if state.Invoke.OnDone != "" {
 				if _, ok := m.machine.States[state.Invoke.OnDone]; !ok {
-					panic(fmt.Errorf("gstate: machine %q state %q has invalid Invoke OnDone target: %q does not exist", m.machine.ID, id, state.Invoke.OnDone))
+					return fmt.Errorf("gstate: machine %q state %q has invalid Invoke OnDone target: %q does not exist", m.machine.ID, id, state.Invoke.OnDone)
 				}
 			}
 			if state.Invoke.OnError != "" {
 				if _, ok := m.machine.States[state.Invoke.OnError]; !ok {
-					panic(fmt.Errorf("gstate: machine %q state %q has invalid Invoke OnError target: %q does not exist", m.machine.ID, id, state.Invoke.OnError))
+					return fmt.Errorf("gstate: machine %q state %q has invalid Invoke OnError target: %q does not exist", m.machine.ID, id, state.Invoke.OnError)
 				}
 			}
 		}
 	}
+	return nil
 }
 
 func (m *MachineBuilder[S, E, D]) computeMetadata(id S, depth int, path []S) {
