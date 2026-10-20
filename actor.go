@@ -822,6 +822,12 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	select {
+	case <-a.stopped:
+		return
+	default:
+	}
+
 	if len(a.eventReceivedObs) > 0 {
 		e := a.newEventNotice(event, "")
 		for _, o := range a.eventReceivedObs {
@@ -829,37 +835,15 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 		}
 	}
 
-	activeStates := a.getSortedActiveStatesLocked()
-	// Bubble up: check transitions from deepest state to root
-	for _, sID := range activeStates {
-		stateDef := a.machine.States[sID]
-		if stateDef == nil {
-			// Hydrate accepts arbitrary Active state IDs; ignore any
-			// that don't correspond to a state in this machine.
-			continue
-		}
-		if transitions, ok := stateDef.Transitions[event]; ok {
-			for _, t := range transitions {
-				if t.Guard != nil {
-					ok := t.Guard(a.data)
-					if len(a.guardObs) > 0 {
-						e := a.newGuardEvent(sID, event, t.Target, ok)
-						for _, o := range a.guardObs {
-							o.OnGuardEvaluated(ctx, e)
-						}
-					}
-					if !ok {
-						continue
-					}
-				}
-				a.executeTransition(ctx, sID, t, event)
-				// Check for transient transitions after the event transition
-				a.handleAlwaysInternal(ctx)
-				a.getSortedActiveStatesLocked()
-				a.checkAndInitiateAutoStopLocked()
-				return
-			}
-		}
+	selected := a.selectTransitions(ctx, event)
+	for _, candidate := range selected {
+		a.executeTransition(ctx, candidate.source, candidate.transition, event)
+	}
+	if len(selected) > 0 {
+		a.handleAlwaysInternal(ctx)
+		a.getSortedActiveStatesLocked()
+		a.checkAndInitiateAutoStopLocked()
+		return
 	}
 
 	// No transition fired for this event.
@@ -868,6 +852,125 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 		for _, o := range a.eventDroppedObs {
 			o.OnEventDropped(ctx, e)
 		}
+	}
+}
+
+// eventTransition is selected against the configuration before any actions run.
+type eventTransition[S ~string, E ~string, D Cloner[D]] struct {
+	source     S
+	transition *TransitionDef[S, E, D]
+	exits      map[S]bool
+}
+
+func (a *Actor[S, E, D]) selectTransitions(ctx context.Context, event E) []eventTransition[S, E, D] {
+	states := slices.Clone(a.getSortedActiveStatesLocked())
+	slices.SortFunc(states, func(x, y S) int {
+		if d := a.machine.States[y].depth - a.machine.States[x].depth; d != 0 {
+			return d
+		}
+		if x < y {
+			return -1
+		}
+		if x > y {
+			return 1
+		}
+		return 0
+	})
+	var selected []eventTransition[S, E, D]
+	for _, id := range states {
+		blocked := false
+		for _, c := range selected {
+			if a.isDescendant(c.source, id) || a.isDescendant(id, c.source) {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+		for _, t := range a.machine.States[id].Transitions[event] {
+			if t.Guard != nil {
+				ok := t.Guard(a.data)
+				if len(a.guardObs) > 0 {
+					e := a.newGuardEvent(id, event, t.Target, ok)
+					for _, o := range a.guardObs {
+						o.OnGuardEvaluated(ctx, e)
+					}
+				}
+				if !ok {
+					continue
+				}
+			}
+			exits := a.transitionExits(id, t.Target)
+			conflict := false
+			for _, c := range selected {
+				if exits[c.source] || c.exits[id] {
+					conflict = true
+					break
+				}
+				for state := range exits {
+					if c.exits[state] {
+						conflict = true
+						break
+					}
+				}
+				if conflict {
+					break
+				}
+			}
+			if !conflict {
+				selected = append(selected, eventTransition[S, E, D]{id, t, exits})
+			}
+			break
+		}
+	}
+	return selected
+}
+
+// Targeted transitions are external: their domain is a proper common ancestor.
+// Targetless transitions preserve the entire active configuration.
+func (a *Actor[S, E, D]) transitionDomain(source, target S) S {
+	var domain S
+	sp, tp := a.machine.States[source].path, a.machine.States[target].path
+	for i := 0; i < len(sp)-1 && i < len(tp)-1 && sp[i] == tp[i]; i++ {
+		domain = sp[i]
+	}
+	return domain
+}
+
+func (a *Actor[S, E, D]) transitionExits(source, target S) map[S]bool {
+	exits := make(map[S]bool)
+	if target == "" {
+		return exits
+	}
+	domain := a.transitionDomain(source, target)
+	for id := range a.active {
+		if id != domain && a.isDescendant(id, domain) {
+			exits[id] = true
+		}
+	}
+	return exits
+}
+
+// enterTargetPath initializes sibling regions when a path enters a parallel state.
+func (a *Actor[S, E, D]) enterTargetPath(ctx context.Context, path []S) {
+	id := path[0]
+	a.enterSingleState(ctx, id)
+	if len(path) == 1 {
+		a.enterChildrenWithHistory(ctx, id, false)
+		return
+	}
+	sd := a.machine.States[id]
+	if sd.Type == Parallel {
+		for _, child := range sortedStateIDs(sd.States) {
+			if child == path[1] {
+				a.enterTargetPath(ctx, path[1:])
+			} else {
+				a.enterState(ctx, child)
+			}
+		}
+	} else {
+		a.enterTargetPath(ctx, path[1:])
 	}
 }
 
@@ -906,35 +1009,13 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 	}
 
 	targetPath := targetState.path
-	sourcePath := sourceState.path
-
-	// Find Lowest Common Ancestor (LCA) to determine which states to exit/enter
-	lcaID := S("")
-	for i := 0; i < len(sourcePath) && i < len(targetPath); i++ {
-		if sourcePath[i] == targetPath[i] {
-			lcaID = sourcePath[i]
-		} else {
-			break
-		}
-	}
-
-	// 2. Exit states from deepest active up to but not including LCA
-	toExit := []S{}
-	sortedActive := a.getSortedActiveStatesLocked()
-
-	// FIX: Self-transition behavior.
-	isSelfTransition := sourceID == t.Target
-
-	for _, sID := range sortedActive {
-		if isSelfTransition {
-			if sID == sourceID || a.isDescendant(sID, sourceID) {
-				toExit = append(toExit, sID)
-			}
-		} else {
-			// Standard LCA logic: Exit if descendant of LCA and NOT the LCA itself
-			if sID != lcaID && a.isDescendant(sID, lcaID) {
-				toExit = append(toExit, sID)
-			}
+	_ = sourceState
+	domain := a.transitionDomain(sourceID, t.Target)
+	exits := a.transitionExits(sourceID, t.Target)
+	var toExit []S
+	for _, id := range a.getSortedActiveStatesLocked() {
+		if exits[id] {
+			toExit = append(toExit, id)
 		}
 	}
 
@@ -981,30 +1062,12 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 		}
 	}
 
-	// 4. Enter states from LCA (exclusive) down to target
-	if isSelfTransition {
-		a.enterSingleState(ctx, t.Target)
-		a.enterChildrenWithHistory(ctx, t.Target, false)
-	} else {
-		lcaDepth := -1
-		if lcaID != "" {
-			for i, id := range targetPath {
-				if id == lcaID {
-					lcaDepth = i
-					break
-				}
-			}
-		}
-
-		for i := lcaDepth + 1; i < len(targetPath); i++ {
-			a.enterSingleState(ctx, targetPath[i])
-		}
-
-		// 5. Resolve children of the target state
-		if len(targetPath) > 0 {
-			a.enterChildrenWithHistory(ctx, targetPath[len(targetPath)-1], false)
-		}
+	// Enter the explicit target path and initialize all unselected regions.
+	offset := 0
+	if domain != "" {
+		offset = a.machine.States[domain].depth + 1
 	}
+	a.enterTargetPath(ctx, targetPath[offset:])
 
 	if len(a.transitionObs) > 0 {
 		e := a.newTransitionEvent(sourceID, t.Target, event)
@@ -1085,7 +1148,7 @@ func (a *Actor[S, E, D]) enterChildrenWithHistory(ctx context.Context, id S, dee
 
 	if stateDef.Type == Parallel {
 		// Parallel regions: enter all regions
-		for childID := range stateDef.States {
+		for _, childID := range sortedStateIDs(stateDef.States) {
 			a.enterSingleState(ctx, childID)
 			a.enterChildrenWithHistory(ctx, childID, deepHistory)
 		}
@@ -1181,4 +1244,13 @@ func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
 			break
 		}
 	}
+}
+
+func sortedStateIDs[S ~string, V any](states map[S]V) []S {
+	ids := make([]S, 0, len(states))
+	for id := range states {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
