@@ -2,7 +2,6 @@ package gstate
 
 import (
 	"context"
-	"fmt"
 	"testing"
 )
 
@@ -26,7 +25,6 @@ func TestClonerSupport(t *testing.T) {
 		State("idle", func(s *StateBuilder[string, string, *CloneCtx]) {
 			s.On("INC").Assign(func(c *CloneCtx) *CloneCtx {
 				c.Value++
-				fmt.Printf("Action: incremented to %d\n", c.Value)
 				c.Data = append(c.Data, c.Value)
 				return c
 			})
