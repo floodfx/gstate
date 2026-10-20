@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.3.2](https://github.com/floodfx/gstate/compare/v0.3.1...v0.3.2) (2026-10-20)
+
+
+### Features
+
+* add active state membership query ([6c9f922](https://github.com/floodfx/gstate/commit/6c9f922e4c812bb5c50da790fb3cd13dec03bf75))
+* add context bounded actor shutdown wait ([09ea9f6](https://github.com/floodfx/gstate/commit/09ea9f66deaa4d282a8318ec6e83017cd7367cfd))
+* add error returning machine validation and build ([42a79e9](https://github.com/floodfx/gstate/commit/42a79e9f7c36c783f1b24e2d9f6ba4b6642f1e6a))
+* expose actor termination with Done ([8590239](https://github.com/floodfx/gstate/commit/85902394f993cbbaf541d45ac259acde81d70376))
+
+
+### Bug Fixes
+
+* broadcast parallel events and preserve external transition domains ([b320368](https://github.com/floodfx/gstate/commit/b320368040b4511e48d0ebe8689ca1ddea00ac76))
+* capture historical observer data before callbacks run ([598af30](https://github.com/floodfx/gstate/commit/598af30adeab2222579a5cbb4ff26766cf501e42))
+* compose repeated transition assignments ([48a02c0](https://github.com/floodfx/gstate/commit/48a02c03f3d1adcfe4a898a6ace3ff7d3bda18d9))
+* eliminate sortedActive cache race and invalidate on state exit ([bed4b20](https://github.com/floodfx/gstate/commit/bed4b207325fbca14686bf5031b4ff24f8ac492c))
+* encode Mermaid keywords used as state identities ([09c11a6](https://github.com/floodfx/gstate/commit/09c11a61b737b7e3fee338688b2f0358866460c7))
+* guard service transitions with entry generations and bound invoke mutate lifetime ([9756a81](https://github.com/floodfx/gstate/commit/9756a813c5919ab96c9c5729f9eaac578ead9f76))
+* initiate auto-stop synchronously under transition lock for all triggers ([2712169](https://github.com/floodfx/gstate/commit/271216915874f2d3b0fa97141b6041cf4e2b2273))
+* isolate Hydrate history/data ownership and normalize active states ([ee330ef](https://github.com/floodfx/gstate/commit/ee330ef5367427c4b4c08a14f38b791d11177e79))
+* preserve and execute guards and actions on delayed transitions ([39b776b](https://github.com/floodfx/gstate/commit/39b776bad9c0f057675c5523a2e7597273ed277b))
+* preserve export identities, targetless edges and action labels ([8f0a6e7](https://github.com/floodfx/gstate/commit/8f0a6e70eaebd40f0ea737e763d015e1cb19a48d))
+* preserve legacy build panic value types ([565611f](https://github.com/floodfx/gstate/commit/565611f15a2f1149657643410e3afdd81a058cd6))
+* preserve sibling regions during external region reentry ([a08bfc9](https://github.com/floodfx/gstate/commit/a08bfc9386ccfecf9319eb2376553b30f8c17151))
+* settle and observe invoke mutations ([f8abdb0](https://github.com/floodfx/gstate/commit/f8abdb0f10ae9f2058901daaf9e09b3575f2adde))
+* stabilize hydrated configurations before returning ([55f59cf](https://github.com/floodfx/gstate/commit/55f59cf6f65b1c09d1969e6f8b84716b9b533442))
+* stop actors with an explicit error on Always exhaustion ([0be4a22](https://github.com/floodfx/gstate/commit/0be4a22b1e38de8830b3a9c19f643d3ee8560cc0))
+* validate statechart structure and normalize hydrated configurations ([3e17953](https://github.com/floodfx/gstate/commit/3e17953c989e12d0ff860d8ee9dcab7d362017d8))
+
 ## [0.3.1](https://github.com/floodfx/gstate/compare/v0.3.0...v0.3.1) (2026-05-22)
 
 
