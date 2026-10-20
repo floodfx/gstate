@@ -376,9 +376,19 @@ func (t *TransitionBuilder[S, E, D]) GuardLabel(name string) *TransitionBuilder[
 	return t
 }
 
-// Assign adds a data update action to the transition.
+// Assign appends a data update action to the transition. Repeated calls run in
+// declaration order, each receiving the previous result. Nil actions are ignored.
+// The composition emits one OnActionExecuted notification after all actions run.
 func (t *TransitionBuilder[S, E, D]) Assign(fn func(D) D) *TransitionBuilder[S, E, D] {
-	t.def.Action = fn
+	if fn == nil {
+		return t
+	}
+	previous := t.def.Action
+	if previous == nil {
+		t.def.Action = fn
+	} else {
+		t.def.Action = func(data D) D { return fn(previous(data)) }
+	}
 	return t
 }
 
