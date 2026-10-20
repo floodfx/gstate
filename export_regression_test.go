@@ -8,7 +8,7 @@ import (
 
 func exportRegressionMachine() *Machine[string, string, Context] {
 	m := New[string, string, Context]("exports").Initial("a-b")
-	for _, id := range []string{"a-b", "a_b", "雪", "end", "__start", "__gstate_start", "a-b_invoke"} {
+	for _, id := range []string{"a-b", "a_b", "雪", "end", "__start", "__gstate_start", "a-b_invoke", "subgraph", "graph", "flowchart", "direction", "style", "classDef", "class", "click", "linkStyle", "default", "accTitle", "accDescr", "TB", "TD", "BT", "LR", "RL"} {
 		m.State(id, func(s *StateBuilder[string, string, Context]) {
 			s.On("INC").Assign(func(c Context) Context { return c }).ActionLabel("increment")
 			s.Always().Guard(func(Context) bool { return false }).Assign(func(c Context) Context { return c }).ActionLabel("automatic")

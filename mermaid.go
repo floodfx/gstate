@@ -276,7 +276,13 @@ func walkStates[S ~string, E ~string, D Cloner[D]](states []*StateDef[S, E, D], 
 // State and synthetic identities occupy disjoint namespaces. Safe state IDs
 // remain readable; all other IDs use an injective byte encoding.
 func mermaidID(id string) string {
-	safe := id != "" && id != "end" && !strings.HasPrefix(id, "__gstate_")
+	safe := id != "" && !strings.HasPrefix(id, "__gstate_")
+	// These tokens have grammar roles even when used in node declarations or
+	// edge endpoints. Keep their labels, but encode their identifiers.
+	switch id {
+	case "end", "subgraph", "graph", "flowchart", "direction", "style", "classDef", "class", "click", "linkStyle", "default", "accTitle", "accDescr", "TB", "TD", "BT", "LR", "RL":
+		safe = false
+	}
 	for i, c := range []byte(id) {
 		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '_' && (i == 0 || c < '0' || c > '9') {
 			safe = false
