@@ -203,12 +203,15 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 // Active states in the snapshot are normalized by closing over their valid
 // ancestor chains, and services are restarted in deterministic root-to-leaf
 // order.
+// Always transitions are evaluated before Hydrate returns, including their
+// actions and normal observer callbacks. Entry actions are skipped only for
+// restored states; newly entered states execute their entry actions normally.
 //
 // Hydrate does not fire [Observer.OnStateEntered] or [Observer.OnTransition]
 // for the states restored from the snapshot — those events represent the
 // original state changes that were already observed before the snapshot was
-// captured. Hooks resume firing on the next event, Always evaluation, or
-// invoke completion handled by the hydrated actor.
+// captured. Hooks resume firing during hydration's Always evaluation and on
+// subsequent events or service transitions.
 //
 // The [ActorID] is resolved in priority order: [WithActorID] if supplied,
 // otherwise the ActorID stored in the snapshot.
@@ -310,7 +313,10 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 		a.stateGens[sID] = a.nextGen
 		a.restartServices(context.Background(), sID)
 	}
-	// If the hydrated snapshot is already in a "done" state, initiate
+	// Stabilize restored or repaired configurations before exposing the actor.
+	a.handleAlwaysInternal(context.Background())
+	a.getSortedActiveStatesLocked()
+	// If the hydrated configuration has reached a "done" state, initiate
 	// shutdown synchronously before releasing the lock.
 	a.checkAndInitiateAutoStopLocked()
 	a.mu.Unlock()
