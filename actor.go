@@ -40,9 +40,12 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	active      map[S]bool
 	history     map[S]S
 	invocations map[S]context.CancelFunc
-	// invokeGens maps active state IDs to their active entry generation token.
-	// This token ensures that a stale mutate closure spawned during a previous
-	// state entry cannot apply mutations after the state has exited or re-entered.
+	// stateGens maps active state IDs to their active entry generation token.
+	// This token ensures that a stale timer or invoke completion from a previous
+	// state entry cannot trigger transitions after the state has exited or re-entered.
+	stateGens map[S]uint64
+	// invokeGens maps active state IDs to their active invoke mutation generation token.
+	// It is cleared as soon as Invoke.Func returns or the state exits.
 	invokeGens map[S]uint64
 	// nextGen tracks the monotonic generation count for state entries.
 	nextGen  uint64
@@ -157,6 +160,7 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 		active:      make(map[S]bool),
 		history:     make(map[S]S),
 		invocations: make(map[S]context.CancelFunc),
+		stateGens:   make(map[S]uint64),
 		invokeGens:  make(map[S]uint64),
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
@@ -242,6 +246,7 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 		active:      active,
 		history:     history,
 		invocations: make(map[S]context.CancelFunc),
+		stateGens:   make(map[S]uint64),
 		invokeGens:  make(map[S]uint64),
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
@@ -255,7 +260,10 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 	a.mu.Lock()
 	sorted := a.getSortedActiveStatesLocked()
 	for i := len(sorted) - 1; i >= 0; i-- {
-		a.restartServices(context.Background(), sorted[i])
+		sID := sorted[i]
+		a.nextGen++
+		a.stateGens[sID] = a.nextGen
+		a.restartServices(context.Background(), sID)
 	}
 	// If the hydrated snapshot is already in a "done" state, initiate
 	// shutdown synchronously before releasing the lock.
@@ -420,6 +428,7 @@ func (a *Actor[S, E, D]) initiateShutdownLocked() {
 			cancel()
 		}
 		a.invocations = make(map[S]context.CancelFunc)
+		a.stateGens = make(map[S]uint64)
 		a.invokeGens = make(map[S]uint64)
 
 		// Stop all timers
@@ -532,17 +541,15 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 		return
 	}
 
+	gen := a.stateGens[id]
+
 	// Start or restart invoked services
 	if stateDef.Invoke != nil {
 		invokeCtx, cancel := context.WithCancel(ctx)
 		a.invocations[id] = cancel
 
-		// Monotonically increment the generation token for this new state entry.
-		// Any mutate closures spawned for this invocation will capture this 'gen'
-		// value and will only commit mutations if this generation matches the
-		// currently active state entry generation in invokeGens.
-		a.nextGen++
-		gen := a.nextGen
+		// Any mutate closures spawned for this invocation capture this state entry
+		// generation and will only commit mutations while invokeGens[id] == gen.
 		a.invokeGens[id] = gen
 
 		snap := a.data.Clone()
@@ -556,8 +563,8 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 				return
 			default:
 			}
-			// Reject mutations if the state has exited or if a new entry has
-			// superseded this invoke's generation (e.g. during A -> B -> A cycling).
+			// Reject mutations if the invoke has finished, the state has exited,
+			// or a new entry has superseded this invoke's generation.
 			if a.invokeGens[id] != gen {
 				return
 			}
@@ -572,10 +579,19 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 			}
 		}
 		a.wg.Add(1)
-		go func(sID S, invoke *InvokeDef[S, E, D], snap D, mutate func(func(D) D)) {
+		go func(sID S, entryGen uint64, invoke *InvokeDef[S, E, D], snap D, mutate func(func(D) D)) {
 			defer a.wg.Done()
 			err := invoke.Func(invokeCtx, snap, mutate)
 			completedAt := time.Now()
+
+			// Invalidate mutate token as soon as Invoke.Func finishes so background
+			// helpers retaining mutate cannot modify actor data after completion.
+			a.mu.Lock()
+			if a.invokeGens[sID] == entryGen {
+				delete(a.invokeGens, sID)
+			}
+			a.mu.Unlock()
+
 			// Report completion regardless of cancellation so observers can
 			// see cancelled invocations. Use invokeCtx.Err() to surface the
 			// cancellation reason when Func didn't return it explicitly.
@@ -598,16 +614,17 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 				target = invoke.OnError
 			}
 			if target != "" {
-				a.executeInternalTransition(context.WithoutCancel(invokeCtx), sID, &TransitionDef[S, E, D]{Target: target})
+				a.executeInternalTransition(context.WithoutCancel(invokeCtx), sID, entryGen, &TransitionDef[S, E, D]{Target: target})
 			}
-		}(id, stateDef.Invoke, snap, mutate)
+		}(id, gen, stateDef.Invoke, snap, mutate)
 	}
 
 	// Start or restart delayed transitions
 	for _, t := range stateDef.Delayed {
 		trans := t // capture for closure
+		entryGen := gen
 		timer := time.AfterFunc(t.After, func() {
-			a.executeInternalTransition(context.Background(), id, trans)
+			a.executeInternalTransition(context.Background(), id, entryGen, trans)
 		})
 		a.timers[id] = append(a.timers[id], timer)
 	}
@@ -942,6 +959,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 				a.history[stateDef.parent] = sID
 			}
 		}
+		delete(a.stateGens, sID)
 		delete(a.active, sID)
 		a.sortedActive = nil // invalidate cache
 		if len(a.stateExitedObs) > 0 {
@@ -1000,6 +1018,8 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 // notifies the observer.
 func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 	a.active[id] = true
+	a.nextGen++
+	a.stateGens[id] = a.nextGen
 	a.sortedActive = nil // invalidate cache
 	stateDef := a.machine.States[id]
 	if stateDef == nil {
@@ -1021,12 +1041,18 @@ func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 }
 
 // executeInternalTransition handles transitions triggered by services (invokes/timers).
-func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID S, t *TransitionDef[S, E, D]) {
+func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID S, gen uint64, t *TransitionDef[S, E, D]) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Verify the source state is still active before transitioning
-	if !a.active[sourceID] || t == nil {
+	select {
+	case <-a.stopped:
+		return
+	default:
+	}
+
+	// Verify the source state is still active in the same entry generation before transitioning.
+	if !a.active[sourceID] || a.stateGens[sourceID] != gen || t == nil {
 		return
 	}
 
