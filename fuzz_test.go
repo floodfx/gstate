@@ -1,11 +1,9 @@
 package gstate
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
 // fuzzMachine builds a small but structurally varied machine that
@@ -51,8 +49,8 @@ func fuzzMachine() *Machine[StateID, EventID, Context] {
 
 // FuzzHydrate feeds fuzzer-controlled bytes through json.Unmarshal into
 // a Snapshot and calls Hydrate against a fixed machine. The invariant
-// is "no panic" — invalid snapshots should either succeed quietly,
-// fail in a recoverable way, or be rejected, but never panic.
+// is a valid active configuration after normalization and after every
+// acknowledged event, even for incomplete or conflicting input snapshots.
 //
 // Persisted snapshots come from disk or network and can be corrupted
 // or attacker-influenced, so this surface is real.
@@ -85,10 +83,15 @@ func FuzzHydrate(f *testing.F) {
 			// Unmarshal failures are fine; we only care about Hydrate.
 			return
 		}
-		a := Hydrate(m, snap)
+		ack := processingAck[StateID, EventID, Context]{received: make(chan struct{}, 1)}
+		a := Hydrate(m, snap, m.WithObservers(ack))
 		defer a.Stop()
-		_ = a.SendCtx(context.Background(), "START")
-		_ = a.SendCtx(context.Background(), "DONE")
+		assertActiveConfiguration(t, m, a.States())
+		for _, event := range []EventID{"START", "DONE"} {
+			if !sendProcessed(t, a, ack.received, event) {
+				break
+			}
+		}
 	})
 }
 
@@ -206,10 +209,10 @@ func FuzzBuilder(f *testing.F) {
 func FuzzEventSequence(f *testing.F) {
 	pool := []EventID{"START", "DONE", "FAIL", "STOP", "BOGUS"}
 
-	f.Add([]byte{0, 1, 3, 0})         // START DONE STOP START
-	f.Add([]byte{0, 1, 2})            // START DONE FAIL (hits Final)
-	f.Add([]byte{0xff, 0xff, 0xff})   // garbage indices
-	f.Add([]byte{4, 4, 4, 4})         // all BOGUS — should be dropped
+	f.Add([]byte{0, 1, 3, 0})       // START DONE STOP START
+	f.Add([]byte{0, 1, 2})          // START DONE FAIL (hits Final)
+	f.Add([]byte{0xff, 0xff, 0xff}) // garbage indices
+	f.Add([]byte{4, 4, 4, 4})       // all BOGUS — should be dropped
 
 	m := fuzzMachine()
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -218,44 +221,20 @@ func FuzzEventSequence(f *testing.F) {
 		}
 
 		rec := &RecordingObserver[StateID, EventID, Context]{}
-		a := Start(m, Context{}, m.WithObservers(rec))
+		ack := processingAck[StateID, EventID, Context]{received: make(chan struct{}, 1)}
+		a := Start(m, Context{}, m.WithObservers(rec, ack))
 		defer a.Stop()
-
-		// SendCtx with a short timeout so a wedged mailbox doesn't hang
-		// the fuzzer iteration. fuzzMachine has no slow actions/invokes
-		// so this should never actually fire.
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-
-		delivered := 0
+		processed := 0
 		for _, b := range data {
-			ev := pool[int(b)%len(pool)]
-			if err := a.SendCtx(ctx, ev); err == nil {
-				delivered++
-			} else {
-				// Either ctx expired, or the actor auto-stopped via a
-				// Final state. Both are acceptable; stop sending.
+			if !sendProcessed(t, a, ack.received, pool[int(b)%len(pool)]) {
 				break
 			}
-			// Invariant: active set is non-empty while running.
-			if states := a.States(); len(states) == 0 {
-				t.Fatalf("active set empty after sending %q (data so far=%v)", ev, data)
-			}
+			processed++
 		}
-
-		// Drain: the events we sent are processed asynchronously by the
-		// loop goroutine. Stop blocks on wg.Wait so by the time Stop
-		// returns, every delivered event has been processed (or the
-		// actor was already stopped, in which case delivered would be
-		// lower than the events we tried to send).
 		a.Stop()
-
-		// Invariant: OnEventReceived count cannot exceed delivered. We
-		// don't require equality because the loop may have abandoned
-		// queued events on Stop per the post-#2 contract.
-		recvCount := len(rec.EventsReceived())
-		if recvCount > delivered {
-			t.Fatalf("OnEventReceived=%d > delivered=%d (data=%v)", recvCount, delivered, data)
+		if got := len(rec.EventsReceived()); got != processed {
+			t.Fatalf("received=%d, processed=%d", got, processed)
 		}
+
 	})
 }

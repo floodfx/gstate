@@ -1,9 +1,9 @@
 package gstate
 
 import (
+	"context"
 	"fmt"
 	"testing"
-	"time"
 )
 
 type CloneCtx struct {
@@ -34,23 +34,18 @@ func TestClonerSupport(t *testing.T) {
 		Build()
 
 	initial := &CloneCtx{Value: 0, Data: []int{0}}
-	actor := Start(machine, initial)
+	step := make(chan struct{}, 1)
+	actor := Start(machine, initial, machine.WithObservers(ObserverFuncs[string, string, *CloneCtx]{TransitionFunc: func(context.Context, *TransitionEvent[string, string, *CloneCtx]) { step <- struct{}{} }}))
+	defer actor.Stop()
 
 	actor.Send("INC")
-	// wait for process using a loop that checks the value
-	deadline := time.Now().Add(1 * time.Second)
-	for actor.Data().Value == 0 && time.Now().Before(deadline) {
-		time.Sleep(1 * time.Millisecond)
-	}
+	<-step
 
 	snapshot := actor.Snapshot()
 
 	// Mutate actor context
 	actor.Send("INC")
-	deadline = time.Now().Add(1 * time.Second)
-	for actor.Data().Value == 1 && time.Now().Before(deadline) {
-		time.Sleep(1 * time.Millisecond)
-	}
+	<-step
 
 	// Snapshot should have the OLD data
 	if snapshot.Data.Value != 1 {

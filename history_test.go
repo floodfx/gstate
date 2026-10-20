@@ -1,8 +1,8 @@
 package gstate
 
 import (
+	"context"
 	"testing"
-	"time"
 )
 
 func TestActorHistory(t *testing.T) {
@@ -24,7 +24,9 @@ func TestActorHistory(t *testing.T) {
 		}).
 		Build()
 
-	actor := Start(m, Context{})
+	step := make(chan struct{}, 1)
+	actor := Start(m, Context{}, m.WithObservers(ObserverFuncs[StateID, EventID, Context]{TransitionFunc: func(context.Context, *TransitionEvent[StateID, EventID, Context]) { step <- struct{}{} }}))
+	defer actor.Stop()
 
 	// Initial state is s1
 	if actor.State() != "s1" {
@@ -33,21 +35,21 @@ func TestActorHistory(t *testing.T) {
 
 	// Move to s2
 	actor.Send("TO_S2")
-	time.Sleep(10 * time.Millisecond)
+	<-step
 	if actor.State() != "s2" {
 		t.Errorf("Expected state s2, got %s", actor.State())
 	}
 
 	// Move out of parent
 	actor.Send("GO_AWAY")
-	time.Sleep(10 * time.Millisecond)
+	<-step
 	if actor.State() != "other" {
 		t.Errorf("Expected state other, got %s", actor.State())
 	}
 
 	// Move back to parent - should restore s2 because of history
 	actor.Send("BACK")
-	time.Sleep(10 * time.Millisecond)
+	<-step
 	if actor.State() != "s2" {
 		t.Errorf("Expected restored state s2, got %s", actor.State())
 	}
