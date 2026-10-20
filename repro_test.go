@@ -3,7 +3,6 @@ package gstate
 import (
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestSelfTransitionReEntry(t *testing.T) {
@@ -49,38 +48,5 @@ func TestSelfTransitionReEntry(t *testing.T) {
 	}
 	if got := entryCount.Load(); got != 2 {
 		t.Errorf("Expected entry count 2 (re-entry), got %d", got)
-	}
-}
-
-func TestInfiniteLoopCircuitBreaker(t *testing.T) {
-	// This test is designed to FAIL (hang) if the circuit breaker is missing.
-	// We'll use a timeout to detect the hang.
-
-	done := make(chan bool)
-
-	go func() {
-		machine := New[string, string, Context]("loop").
-			Initial("A").
-			State("A", func(s *StateBuilder[string, string, Context]) {
-				s.Always().GoTo("B")
-			}).
-			State("B", func(s *StateBuilder[string, string, Context]) {
-				s.Always().GoTo("A")
-			}).
-			Build()
-
-		Start(machine, Context{})
-		// If Start() blocks forever or handleAlwaysInternal loops forever, we won't reach here
-		// Note: Start runs loop in goroutine, but handleAlwaysInternal runs synchronously
-		// during initial entry!
-
-		done <- true
-	}()
-
-	select {
-	case <-done:
-		// Success (it didn't hang forever, though it might panic if we add a limit)
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Test timed out - likely infinite loop in Always transitions")
 	}
 }

@@ -365,6 +365,8 @@ machine := gstate.New[MyState, MyEvent, any]("invalid_target").
 
 ---
 
+Each eventless (`Always`) sequence has a budget of `max(100, 2 * number of states)` transitions. If another enabled transition would exceed that budget, the actor stops, cancels services, and exposes `gstate.ErrAlwaysLimit` through `actor.Err()`. This is a resource bound, not proof of a cycle. Finite chains within the budget settle normally.
+
 ## 12. Observing Lifecycle Events
 
 When you want to record transitions, guard outcomes, state entries/exits, transition actions, and invoked services — for telemetry, tracing, audit logs, or just to debug what your machine is doing — you do **not** need to wrap every `Entry`, `Exit`, `Guard`, and `Invoke` by hand. Pass one or more observers to `Start`:
