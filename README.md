@@ -592,6 +592,8 @@ All read methods are thread-safe (protected by `RWMutex`).
 actor.Stop()
 ```
 
+`actor.Done()` returns a stable receive-only channel that closes after shutdown, the mailbox loop, all invoke functions, and their completion callbacks finish. It also closes after automatic completion or a terminal runtime error. It stays open while an invoke ignores cancellation. User-spawned goroutines and already firing timer callbacks are not awaited.
+
 `Stop()` cancels all running invocations and timers, then waits for in-flight work to drain before returning. It is safe to call multiple times — only the first call performs the shutdown.
 
 **Guaranteed finished before `Stop` returns:**

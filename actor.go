@@ -63,6 +63,8 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// dedicated channel (rather than closing the mailbox) avoids the
 	// send-on-closed-channel panic when multiple senders race with Stop.
 	stopped chan struct{}
+	// done closes after shutdown and all tracked goroutines have returned.
+	done chan struct{}
 	// wg tracks the loop goroutine and every invoke goroutine spawned by
 	// [Actor.restartServices]. Stop waits on wg before returning so callers
 	// can rely on a clean shutdown without leaked goroutines.
@@ -170,6 +172,7 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
+		done:        make(chan struct{}),
 		id:          cfg.actorID,
 	}
 	a.installObservers(cfg.observers)
@@ -188,6 +191,7 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 
 	a.wg.Add(1)
 	go a.loop()
+	go a.awaitTermination()
 	return a
 }
 
@@ -299,6 +303,7 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 		timers:      make(map[S][]*time.Timer),
 		mailbox:     make(chan envelope[E], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
+		done:        make(chan struct{}),
 		id:          id,
 	}
 	a.installObservers(cfg.observers)
@@ -323,6 +328,7 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 
 	a.wg.Add(1)
 	go a.loop()
+	go a.awaitTermination()
 	return a
 }
 
@@ -574,7 +580,21 @@ func (a *Actor[S, E, D]) Stop() {
 
 	// Wait for the loop goroutine and every invoke goroutine to return
 	// before declaring shutdown complete.
+	<-a.done
+}
+
+// Done returns a stable channel closed after shutdown, the mailbox loop, all
+// Invoke Func calls, and their completion observers have finished. It remains
+// open while an invoke ignores cancellation. As with Stop, user-spawned
+// goroutines and already firing timer callbacks are not awaited.
+func (a *Actor[S, E, D]) Done() <-chan struct{} {
+	return a.done
+}
+
+func (a *Actor[S, E, D]) awaitTermination() {
+	<-a.stopped
 	a.wg.Wait()
+	close(a.done)
 }
 
 // ID returns the actor's stable identifier. The ID is generated on [Start]
