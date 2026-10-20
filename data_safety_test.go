@@ -436,4 +436,162 @@ func TestJSONWireFormat(t *testing.T) {
 	}
 }
 
+func TestInvokeMutateAfterInvokeCompleted(t *testing.T) {
+	var savedMutate func(func(Context) Context)
+	invokeDone := make(chan struct{})
 
+	m := New[StateID, EventID, Context]("mutate-after-complete").
+		Initial("a").
+		State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+			// Targetless invoke: state "a" remains active after Invoke.Func returns!
+			s.Invoke(func(_ context.Context, _ Context, mutate func(func(Context) Context)) error {
+				savedMutate = mutate
+				mutate(func(c Context) Context {
+					c.Count = 10
+					return c
+				})
+				return nil
+			}, "", "")
+		}).
+		Build()
+
+	obs := ObserverFuncs[StateID, EventID, Context]{
+		InvokeCompletedFunc: func(context.Context, *InvokeEvent[StateID, EventID, Context]) {
+			close(invokeDone)
+		},
+	}
+	a := Start(m, Context{Count: 0}, m.WithObservers(obs))
+	defer a.Stop()
+
+	<-invokeDone
+	if got := a.Data().Count; got != 10 {
+		t.Fatalf("Data().Count after invoke = %d, want 10", got)
+	}
+
+	// Attempt to mutate using the captured closure after the invoke has completed
+	// while state "a" is still active. Must be ignored!
+	savedMutate(func(c Context) Context {
+		c.Count = 9999
+		return c
+	})
+
+	if got := a.Data().Count; got != 10 {
+		t.Errorf("completed invoke mutate modified live data: got %d, want 10", got)
+	}
+}
+
+func TestStaleServiceTransitionsIgnoredOnReentryAndStop(t *testing.T) {
+	t.Run("stale_invoke_completion_ignored_after_reentry", func(t *testing.T) {
+		invoke1Started := make(chan struct{})
+		releaseInvoke1 := make(chan struct{})
+		invoke1Completed := make(chan struct{})
+		invoke2Started := make(chan struct{})
+
+		var callCount atomic.Int32
+		m := New[StateID, EventID, Context]("stale-invoke-reentry").
+			Initial("a").
+			State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
+					if callCount.Add(1) == 1 {
+						close(invoke1Started)
+						<-releaseInvoke1
+						// Return nil even though state "a" exited and re-entered!
+						return nil
+					}
+					close(invoke2Started)
+					<-ctx.Done()
+					return ctx.Err()
+				}, "done", "err")
+				s.On("CYCLE").GoTo("b")
+			}).
+			State("b", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Always().GoTo("a")
+			}).
+			State("done", func(_ *StateBuilder[StateID, EventID, Context]) {}).
+			State("err", func(_ *StateBuilder[StateID, EventID, Context]) {}).
+			Build()
+
+		obs := ObserverFuncs[StateID, EventID, Context]{
+			InvokeCompletedFunc: func(_ context.Context, _ *InvokeEvent[StateID, EventID, Context]) {
+				select {
+				case <-invoke1Completed:
+				default:
+					close(invoke1Completed)
+				}
+			},
+		}
+		a := Start(m, Context{}, m.WithObservers(obs))
+		defer a.Stop()
+
+		<-invoke1Started
+		// Cycle a -> b -> a so "a" is active in generation 2 while invoke 1 is still finishing.
+		a.Send("CYCLE")
+		<-invoke2Started
+
+		close(releaseInvoke1)
+		<-invoke1Completed
+
+		if got := a.State(); got != "a" {
+			t.Errorf("stale invoke 1 transitioned actor to %q, want \"a\"", got)
+		}
+	})
+
+	t.Run("stale_internal_transition_ignored_after_reentry_and_stop", func(t *testing.T) {
+		m := New[StateID, EventID, Context]("stale-internal-trigger").
+			Initial("a").
+			State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.On("CYCLE").GoTo("b")
+			}).
+			State("b", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Always().GoTo("a")
+			}).
+			State("c", func(_ *StateBuilder[StateID, EventID, Context]) {}).
+			Build()
+
+		done := make(chan struct{})
+		a := Start(m, Context{Count: 1}, m.WithObservers(ObserverFuncs[StateID, EventID, Context]{
+			TransitionFunc: func(_ context.Context, e *TransitionEvent[StateID, EventID, Context]) {
+				if e.From == "b" && e.To == "a" {
+					close(done)
+				}
+			},
+		}))
+		defer a.Stop()
+
+		a.mu.RLock()
+		gen1 := a.stateGens["a"]
+		a.mu.RUnlock()
+
+		// Cycle a -> b -> a so "a" is active again under a new entry generation.
+		a.Send("CYCLE")
+		<-done
+
+		tr := &TransitionDef[StateID, EventID, Context]{
+			Target: "c",
+			Action: func(c Context) Context { c.Count = 999; return c },
+		}
+
+		// Firing an internal transition with the stale gen1 token must be ignored even though "a" is active.
+		a.executeInternalTransition(context.Background(), "a", gen1, tr)
+		if got := a.State(); got != "a" {
+			t.Errorf("stale generation trigger moved state to %q, want \"a\"", got)
+		}
+		if got := a.Data().Count; got != 1 {
+			t.Errorf("stale generation trigger ran action: Count=%d, want 1", got)
+		}
+
+		// Capture current generation and Stop the actor; firing with current generation after Stop must also no-op.
+		a.mu.RLock()
+		gen2 := a.stateGens["a"]
+		a.mu.RUnlock()
+		a.Stop()
+
+		a.executeInternalTransition(context.Background(), "a", gen2, tr)
+		if got := a.State(); got != "a" {
+			t.Errorf("post-Stop internal trigger moved state to %q, want \"a\"", got)
+		}
+		if got := a.Data().Count; got != 1 {
+			t.Errorf("post-Stop internal trigger ran action: Count=%d, want 1", got)
+		}
+	})
+}
