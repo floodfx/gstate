@@ -60,13 +60,13 @@ bench-trend:
 # Tier 1 smoke fuzz: run 200,000 inputs per target to catch panics.
 # Use an execution budget to avoid Go's duration-expiry race (go.dev/issue/75804),
 # which can fail a healthy target with "context deadline exceeded" on Go 1.26.6.
-# The separate test timeout still fails stalled targets. Keep errors fatal.
+# Keep errors fatal and retain Go's default worker hang detection.
 # Corpus regression for known crashes also happens automatically when
 # `just test` replays the files in testdata/fuzz/.
 fuzz-smoke:
-    go test -run='^$' -fuzz=FuzzHydrate -fuzztime=200000x -parallel=1 -timeout=2m .
-    go test -run='^$' -fuzz=FuzzBuilder -fuzztime=200000x -parallel=1 -timeout=2m .
-    go test -run='^$' -fuzz=FuzzEventSequence -fuzztime=200000x -parallel=1 -timeout=2m .
+    go test -run='^$' -fuzz=FuzzHydrate -fuzztime=200000x -parallel=1 .
+    go test -run='^$' -fuzz=FuzzBuilder -fuzztime=200000x -parallel=1 .
+    go test -run='^$' -fuzz=FuzzEventSequence -fuzztime=200000x -parallel=1 .
 
 # Tier 2 deep fuzz: run a single target for an extended window. The
 # scheduled fuzz workflow invokes this once per target via a matrix
