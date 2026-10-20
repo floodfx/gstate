@@ -133,6 +133,12 @@ func (m *Machine[S, E, D]) WithActorID(id ActorID) Option[S, E, D] {
 // applied in order; later values for the same option win. The returned Actor
 // is already running and ready to receive events via [Actor.Send] or
 // [Actor.SendCtx].
+//
+// Ownership: Start takes ownership of initialData without calling
+// [Cloner.Clone] on the no-observer fast path. If initialData contains
+// reference types (pointers, slices, maps), the caller must not mutate it
+// after passing it to Start (pass initialData.Clone() if the caller retains a
+// reference).
 func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D, opts ...Option[S, E, D]) *Actor[S, E, D] {
 	cfg := config[S, E, D]{mailboxSize: defaultMailboxSize}
 	for _, o := range opts {
@@ -184,6 +190,13 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 // is accepted so callers can attach an observer or tune the mailbox on a
 // hydrated actor.
 //
+// Hydrate copies snapshot.History and clones snapshot.Data via [Cloner.Clone]
+// so the restored actor owns independent state and multiple actors can be
+// hydrated from the same snapshot without sharing mutable references.
+// Active states in the snapshot are normalized by closing over their valid
+// ancestor chains, and services are restarted in deterministic root-to-leaf
+// order.
+//
 // Hydrate does not fire [Observer.OnStateEntered] or [Observer.OnTransition]
 // for the states restored from the snapshot — those events represent the
 // original state changes that were already observed before the snapshot was
@@ -203,16 +216,21 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 
 	active := make(map[S]bool)
 	for _, sID := range snapshot.Active {
+		sd, ok := m.States[sID]
+		if !ok || sd == nil {
+			continue
+		}
+		for _, ancID := range sd.path {
+			active[ancID] = true
+		}
 		active[sID] = true
 	}
 
-	// Snapshots produced by Actor.Snapshot always have a non-nil
-	// History map, but JSON unmarshal can produce nil when the field
-	// is missing (e.g. `{"active":[...]}`). Coalesce so subsequent
-	// writes in executeTransition don't panic.
-	history := snapshot.History
-	if history == nil {
-		history = make(map[S]S)
+	// Copy the snapshot's history map so the hydrated actor owns an independent
+	// map and never mutates or races on the caller's snapshot.
+	history := make(map[S]S, len(snapshot.History))
+	for k, v := range snapshot.History {
+		history[k] = v
 	}
 
 	id := cfg.actorID
@@ -222,7 +240,7 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 
 	a := &Actor[S, E, D]{
 		machine:     m,
-		data:        snapshot.Data,
+		data:        snapshot.Data.Clone(),
 		active:      active,
 		history:     history,
 		invocations: make(map[S]context.CancelFunc),
@@ -234,12 +252,13 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 	}
 	a.installObservers(cfg.observers)
 
-	// Restart background services for all active states
+	// Restart background services for all active states in deterministic
+	// root-to-leaf order.
 	a.mu.Lock()
-	for sID := range active {
-		a.restartServices(context.Background(), sID)
+	sorted := a.getSortedActiveStatesLocked()
+	for i := len(sorted) - 1; i >= 0; i-- {
+		a.restartServices(context.Background(), sorted[i])
 	}
-	a.getSortedActiveStatesLocked()
 	a.mu.Unlock()
 
 	a.wg.Add(1)
