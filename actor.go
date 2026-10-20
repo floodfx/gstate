@@ -17,6 +17,10 @@ import (
 // was not delivered.
 var ErrActorStopped = errors.New("gstate: actor stopped")
 
+// ErrAlwaysLimit reports that eventless processing exhausted its step budget.
+// The actor shuts down and preserves its last configuration for inspection.
+var ErrAlwaysLimit = errors.New("gstate: Always transition budget exhausted")
+
 // defaultMailboxSize is the buffer size used when [WithMailboxSize] is not set.
 const defaultMailboxSize = 100
 
@@ -48,11 +52,12 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// It is cleared as soon as Invoke.Func returns or the state exits.
 	invokeGens map[S]uint64
 	// nextGen tracks the monotonic generation count for state entries.
-	nextGen  uint64
-	timers   map[S][]*time.Timer
-	mailbox  chan envelope[E]
-	mu       sync.RWMutex
-	stopOnce sync.Once
+	nextGen     uint64
+	timers      map[S][]*time.Timer
+	mailbox     chan envelope[E]
+	mu          sync.RWMutex
+	stopOnce    sync.Once
+	terminalErr error
 	// stopped is closed exactly once by Stop to signal shutdown to the loop
 	// goroutine and to any caller parked in [Actor.SendCtx]'s select. Using a
 	// dedicated channel (rather than closing the mailbox) avoids the
@@ -572,6 +577,13 @@ func (a *Actor[S, E, D]) Stop() {
 // actor across persistence boundaries.
 func (a *Actor[S, E, D]) ID() ActorID {
 	return a.id
+}
+
+// Err returns the terminal runtime error, or nil after normal completion or Stop.
+func (a *Actor[S, E, D]) Err() error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.terminalErr
 }
 
 // Data returns a thread-safe copy of the current data.
@@ -1252,20 +1264,11 @@ func (a *Actor[S, E, D]) isDescendant(childID, parentID S) bool {
 // Must be called with a write lock.
 // It includes a circuit breaker to prevent infinite loops.
 func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
-	const maxIterations = 100
+	maxIterations := max(100, 2*len(a.machine.States))
 	iterations := 0
 	var zero E
 
 	for {
-		iterations++
-		if iterations > maxIterations {
-			// Panic or log error? For a library, panic might be too harsh, but infinite loop is fatal.
-			// Ideally we return an error, but this is an internal void method.
-			// We will break to save the process.
-			fmt.Printf("gstate: infinite loop detected in Always transitions (max %d)\n", maxIterations)
-			break
-		}
-
 		transitioned := false
 		sortedActive := a.getSortedActiveStatesLocked()
 
@@ -1289,6 +1292,13 @@ func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
 						continue
 					}
 				}
+				if iterations == maxIterations {
+					a.terminalErr = ErrAlwaysLimit
+					a.initiateShutdownLocked()
+					return
+				}
+				iterations++
+
 				a.executeTransition(ctx, sID, t, zero)
 				transitioned = true
 				break // restart loop to re-evaluate active states
