@@ -172,15 +172,13 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 	// Handle any transient transitions that fire immediately
 	a.handleAlwaysInternal(context.Background())
 	a.getSortedActiveStatesLocked()
+	// If the Initial chain landed on a top-level "done" state, initiate
+	// shutdown synchronously before releasing the lock.
+	a.checkAndInitiateAutoStopLocked()
 	a.mu.Unlock()
 
 	a.wg.Add(1)
 	go a.loop()
-
-	// If the Initial chain landed on a top-level "done" state, auto-stop
-	// immediately. This handles machines whose Initial points directly
-	// to a Final, or whose Always chain terminates in one.
-	a.maybeAutoStop()
 	return a
 }
 
@@ -259,13 +257,13 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 	for i := len(sorted) - 1; i >= 0; i-- {
 		a.restartServices(context.Background(), sorted[i])
 	}
+	// If the hydrated snapshot is already in a "done" state, initiate
+	// shutdown synchronously before releasing the lock.
+	a.checkAndInitiateAutoStopLocked()
 	a.mu.Unlock()
 
 	a.wg.Add(1)
 	go a.loop()
-
-	// If the hydrated snapshot is already in a "done" state, auto-stop.
-	a.maybeAutoStop()
 	return a
 }
 
@@ -412,18 +410,38 @@ func (a *Actor[S, E, D]) isStateDoneLocked(sID S) bool {
 	return false
 }
 
-// maybeAutoStop spawns Stop on a fresh goroutine if the machine's top-level
-// active state has reached completion (see isStateDoneLocked).
-//
-// Stop must run on a separate goroutine: when maybeAutoStop is triggered
-// from the loop goroutine (after handleEvent returns), a synchronous Stop
-// would deadlock — Stop both re-acquires a.mu and waits on a.wg for the
-// loop goroutine to exit, which is the goroutine that called Stop.
-//
-// Must be called WITHOUT holding a.mu; it acquires RLock briefly to read
-// the active set.
-func (a *Actor[S, E, D]) maybeAutoStop() {
-	a.mu.RLock()
+// initiateShutdownLocked performs the lock-protected shutdown phase: cancels
+// all active invocations, stops all active timers, and closes a.stopped.
+// Must be called with a.mu.Lock() held. Safe to call multiple times via stopOnce.
+func (a *Actor[S, E, D]) initiateShutdownLocked() {
+	a.stopOnce.Do(func() {
+		// Cancel all invocations
+		for _, cancel := range a.invocations {
+			cancel()
+		}
+		a.invocations = make(map[S]context.CancelFunc)
+		a.invokeGens = make(map[S]uint64)
+
+		// Stop all timers
+		for _, timers := range a.timers {
+			for _, t := range timers {
+				t.Stop()
+			}
+		}
+		a.timers = make(map[S][]*time.Timer)
+
+		// Signal shutdown. Senders parked in SendCtx's select wake on the
+		// stopped channel and return without delivering. The loop goroutine
+		// observes stopped at its next iteration and exits.
+		close(a.stopped)
+	})
+}
+
+// checkAndInitiateAutoStopLocked checks if the machine's top-level active state
+// has reached completion (see isStateDoneLocked) and, if so, initiates
+// shutdown synchronously under the write lock.
+// Must be called with a.mu.Lock() held.
+func (a *Actor[S, E, D]) checkAndInitiateAutoStopLocked() {
 	var topLevel S
 	var found bool
 	for sID := range a.active {
@@ -434,10 +452,8 @@ func (a *Actor[S, E, D]) maybeAutoStop() {
 			break
 		}
 	}
-	done := found && a.isStateDoneLocked(topLevel)
-	a.mu.RUnlock()
-	if done {
-		go a.Stop()
+	if found && a.isStateDoneLocked(topLevel) {
+		a.initiateShutdownLocked()
 	}
 }
 
@@ -480,33 +496,13 @@ func (a *Actor[S, E, D]) maybeAutoStop() {
 // Stop (or concurrently with Stop past the shutdown-signal point) return
 // without delivering the event and without panicking.
 func (a *Actor[S, E, D]) Stop() {
-	a.stopOnce.Do(func() {
-		a.mu.Lock()
-		// Cancel all invocations
-		for _, cancel := range a.invocations {
-			cancel()
-		}
-		a.invocations = make(map[S]context.CancelFunc)
-		a.invokeGens = make(map[S]uint64)
+	a.mu.Lock()
+	a.initiateShutdownLocked()
+	a.mu.Unlock()
 
-		// Stop all timers
-		for _, timers := range a.timers {
-			for _, t := range timers {
-				t.Stop()
-			}
-		}
-		a.timers = make(map[S][]*time.Timer)
-
-		// Signal shutdown. Senders parked in SendCtx's select wake on the
-		// stopped channel and return without delivering. The loop goroutine
-		// observes stopped at its next iteration and exits.
-		close(a.stopped)
-		a.mu.Unlock()
-
-		// Wait for the loop goroutine and every invoke goroutine to return
-		// before declaring shutdown complete.
-		a.wg.Wait()
-	})
+	// Wait for the loop goroutine and every invoke goroutine to return
+	// before declaring shutdown complete.
+	a.wg.Wait()
 }
 
 // ID returns the actor's stable identifier. The ID is generated on [Start]
@@ -799,9 +795,6 @@ func (a *Actor[S, E, D]) loop() {
 		select {
 		case env := <-a.mailbox:
 			a.handleEvent(env.ctx, env.event)
-			// After the lock released, check whether the transition
-			// landed us in a "done" top-level state and auto-stop if so.
-			a.maybeAutoStop()
 		case <-a.stopped:
 			return
 		}
@@ -846,6 +839,7 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 				// Check for transient transitions after the event transition
 				a.handleAlwaysInternal(ctx)
 				a.getSortedActiveStatesLocked()
+				a.checkAndInitiateAutoStopLocked()
 				return
 			}
 		}
@@ -1053,6 +1047,7 @@ func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID
 	a.executeTransition(ctx, sourceID, t, zero)
 	a.handleAlwaysInternal(ctx)
 	a.getSortedActiveStatesLocked()
+	a.checkAndInitiateAutoStopLocked()
 }
 
 // enterChildrenWithHistory resolves the child states to enter, respecting history and parallel types.
