@@ -996,8 +996,14 @@ func (a *Actor[S, E, D]) transitionExits(source, target S) map[S]bool {
 		return exits
 	}
 	domain := a.transitionDomain(source, target)
+	// Within a parallel domain the validated source and target share one region.
+	// Re-enter only that region; orthogonal siblings retain their configuration.
+	region := S("")
+	if sd := a.machine.States[domain]; sd != nil && sd.Type == Parallel {
+		region = a.machine.States[source].path[len(sd.path)]
+	}
 	for id := range a.active {
-		if id != domain && a.isDescendant(id, domain) {
+		if id != domain && a.isDescendant(id, domain) && (region == "" || a.isDescendant(id, region)) {
 			exits[id] = true
 		}
 	}

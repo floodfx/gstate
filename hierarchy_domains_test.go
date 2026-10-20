@@ -61,3 +61,39 @@ func TestEntryIntoNestedParallelTarget(t *testing.T) {
 		t.Fatalf("states=%v", got)
 	}
 }
+
+func TestParallelRegionExternalReentry(t *testing.T) {
+	for _, target := range []string{"r1", "a"} {
+		t.Run(target, func(t *testing.T) {
+			m := New[string, string, Context]("regions").Initial("p").State("p", func(s *StateBuilder[string, string, Context]) {
+				s.Type(Parallel)
+				s.State("r1", func(s *StateBuilder[string, string, Context]) {
+					s.Initial("a")
+					s.Entry(func(c Context) Context { c.Count++; return c })
+					s.On("RESET").GoTo(target)
+					s.State("a", func(*StateBuilder[string, string, Context]) {})
+				})
+				s.State("r2", func(s *StateBuilder[string, string, Context]) {
+					s.Initial("x")
+					s.Entry(func(c Context) Context { c.Count += 100; return c })
+					s.State("x", func(s *StateBuilder[string, string, Context]) { s.On("NEXT").GoTo("y") })
+					s.State("y", func(*StateBuilder[string, string, Context]) {})
+				})
+			}).Build()
+			done := make(chan struct{}, 2)
+			a := Start(m, Context{}, m.WithObservers(ObserverFuncs[string, string, Context]{TransitionFunc: func(context.Context, *TransitionEvent[string, string, Context]) { done <- struct{}{} }}))
+			defer a.Stop()
+			a.Send("NEXT")
+			<-done
+			_ = a.States()
+			a.Send("RESET")
+			<-done
+			if got := a.States(); !slices.Equal(got, []string{"p", "r1", "r2", "a", "y"}) {
+				t.Errorf("states=%v, sibling must retain y", got)
+			}
+			if got := a.Data().Count; got != 102 {
+				t.Errorf("entry count=%d, want 102", got)
+			}
+		})
+	}
+}
