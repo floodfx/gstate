@@ -5,15 +5,19 @@ config:
     fontSize: 16px
 ---
 flowchart TB
-    __start(("●"))
-    __start --> active
+    __gstate_start(("●"))
+    __gstate_start --> active
     subgraph active ["active"]
         direction LR
         subgraph keyboard ["keyboard"]
+            __gstate_initial_6b6579626f617264(("●"))
+            __gstate_initial_6b6579626f617264 --> caps_off
             caps_off(["caps_off"])
             caps_on(["caps_on"])
         end
         subgraph mouse ["mouse"]
+            __gstate_initial_6d6f757365(("●"))
+            __gstate_initial_6d6f757365 --> not_clicked
             clicked(["clicked"])
             not_clicked(["not_clicked"])
         end

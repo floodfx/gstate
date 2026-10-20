@@ -1,8 +1,10 @@
 package gstate
 
 import (
+	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 
 	mm "github.com/floodfx/gstate/internal/mermaid"
 )
@@ -74,8 +76,8 @@ func ToMermaid[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], opts ...M
 	// The label "●" (U+25CF) gives the synthetic start node the standard
 	// UML filled-circle visual.
 	if m.Initial != "" {
-		f.Node("__start", "●", mm.ShapeCircle)
-		f.Edge("__start", mermaidID(string(m.Initial)), "", mm.EdgeSolid)
+		f.Node("__gstate_start", "●", mm.ShapeCircle)
+		f.Edge("__gstate_start", mermaidID(string(m.Initial)), "", mm.EdgeSolid)
 	}
 
 	// Declare states (nodes/subgraphs) in their proper scope.
@@ -108,7 +110,7 @@ func declareState[S ~string, E ~string, D Cloner[D]](
 
 	if hasChildren || def.Type == Parallel {
 		// Compound or parallel: emit as subgraph; recurse for children.
-		sg := newSubgraph(root, parent, id, string(def.ID))
+		sg := newSubgraph(root, parent, id, buildStateLabel(def, string(def.ID)))
 		if def.Type == Parallel {
 			sg.Direction(mm.DirLR)
 		}
@@ -117,7 +119,12 @@ func declareState[S ~string, E ~string, D Cloner[D]](
 			if def.History == Deep {
 				label = "[H*]"
 			}
-			sg.Node(id+"_hist", label, mm.ShapeCircle)
+			sg.Node(syntheticMermaidID("history", string(def.ID)), label, mm.ShapeCircle)
+		}
+		if def.Type == Compound && def.Initial != "" {
+			start := syntheticMermaidID("initial", string(def.ID))
+			sg.Node(start, "●", mm.ShapeCircle)
+			sg.Edge(start, mermaidID(string(def.Initial)), "", mm.EdgeSolid)
 		}
 		for _, child := range sortedChildren(def) {
 			declareState(root, sg, child, m)
@@ -176,7 +183,7 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 	// Event-driven transitions, in declaration order.
 	for _, event := range def.eventOrder {
 		for _, tr := range def.Transitions[event] {
-			f.Edge(from, mermaidID(string(tr.Target)), transitionLabel(string(event), tr), mm.EdgeSolid)
+			f.Edge(from, mermaidTarget(from, string(tr.Target)), transitionLabel(string(event), tr), mm.EdgeSolid)
 		}
 	}
 
@@ -184,20 +191,13 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 	// go so readers can see the transition is automatic/eventless, rather
 	// than an unlabeled arrow that looks like any other connection.
 	for _, tr := range def.Always {
-		f.Edge(from, mermaidID(string(tr.Target)), transitionLabel("always", tr), mm.EdgeSolid)
+		f.Edge(from, mermaidTarget(from, string(tr.Target)), transitionLabel("always", tr), mm.EdgeSolid)
 	}
 
 	// Delayed transitions.
 	for _, tr := range def.Delayed {
-		label := fmt.Sprintf("after %s", formatDuration(tr.After))
-		if tr.Guard != nil {
-			gn := "guard"
-			if tr.guardName != "" {
-				gn = tr.guardName
-			}
-			label += fmt.Sprintf(" [%s]", gn)
-		}
-		f.Edge(from, mermaidID(string(tr.Target)), label, mm.EdgeSolid)
+		label := transitionLabel(fmt.Sprintf("after %s", formatDuration(tr.After)), tr)
+		f.Edge(from, mermaidTarget(from, string(tr.Target)), label, mm.EdgeSolid)
 	}
 
 	// Invoke: diamond pseudo-state when both OnDone and OnError are set;
@@ -207,11 +207,8 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 		hasError := def.Invoke.OnError != ""
 		switch {
 		case hasDone && hasError:
-			diamondID := from + "_invoke"
+			diamondID := syntheticMermaidID("invoke", string(def.ID))
 			diamondLabel := def.Invoke.label
-			if diamondLabel != "" {
-				diamondID = mermaidID(diamondLabel)
-			}
 			f.Node(diamondID, diamondLabel, mm.ShapeDiamond)
 			f.Edge(from, diamondID, "", mm.EdgeSolid)
 			f.Edge(diamondID, mermaidID(string(def.Invoke.OnDone)), "invoke.done", mm.EdgeSolid)
@@ -244,6 +241,14 @@ func transitionLabel[S ~string, E ~string, D Cloner[D]](event string, tr *Transi
 		}
 		label += fmt.Sprintf("[%s]", gn)
 	}
+	if tr.Action != nil {
+		name := tr.actionName
+		if name == "" {
+			name = "action"
+		}
+		label += " / " + name
+	}
+
 	return label
 }
 
@@ -268,16 +273,28 @@ func walkStates[S ~string, E ~string, D Cloner[D]](states []*StateDef[S, E, D], 
 	}
 }
 
-// mermaidID sanitizes a state id into a Mermaid-compatible identifier.
+// State and synthetic identities occupy disjoint namespaces. Safe state IDs
+// remain readable; all other IDs use an injective byte encoding.
 func mermaidID(id string) string {
-	result := make([]byte, 0, len(id))
-	for i := 0; i < len(id); i++ {
-		c := id[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
-			result = append(result, c)
-		} else {
-			result = append(result, '_')
+	safe := id != "" && id != "end" && !strings.HasPrefix(id, "__gstate_")
+	for i, c := range []byte(id) {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '_' && (i == 0 || c < '0' || c > '9') {
+			safe = false
+			break
 		}
 	}
-	return string(result)
+	if safe {
+		return id
+	}
+	return "__gstate_state_" + hex.EncodeToString([]byte(id))
+}
+
+func syntheticMermaidID(kind, id string) string {
+	return "__gstate_" + kind + "_" + hex.EncodeToString([]byte(id))
+}
+func mermaidTarget(from, target string) string {
+	if target == "" {
+		return from
+	}
+	return mermaidID(target)
 }

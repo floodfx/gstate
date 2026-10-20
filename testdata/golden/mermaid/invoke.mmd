@@ -5,12 +5,12 @@ config:
     fontSize: 16px
 ---
 flowchart TB
-    __start(("●"))
-    __start --> loading
+    __gstate_start(("●"))
+    __gstate_start --> loading
     failure((("failure")))
     loading(["loading"])
     success((("success")))
-    loading_invoke{"loading_invoke"}
-    loading --> loading_invoke
-    loading_invoke -->|"invoke.done"| success
-    loading_invoke -->|"invoke.error"| failure
+    __gstate_invoke_6c6f6164696e67{"__gstate_invoke_6c6f6164696e67"}
+    loading --> __gstate_invoke_6c6f6164696e67
+    __gstate_invoke_6c6f6164696e67 -->|"invoke.done"| success
+    __gstate_invoke_6c6f6164696e67 -->|"invoke.error"| failure

@@ -1,0 +1,70 @@
+---
+config:
+  theme: default
+  themeVariables:
+    fontSize: 16px
+---
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> __gstate_state_612d62
+    __gstate_state_5f5f6773746174655f7374617274(["__gstate_start"])
+    __start(["__start"])
+    __gstate_state_612d62(["a-b"])
+    __gstate_state_612d625f696e766f6b65(["a-b_invoke"])
+    a_b(["a_b"])
+    __gstate_state_656e64(["end"])
+    subgraph parent ["parent<br/>entry / open<br/>exit / close"]
+        __gstate_initial_706172656e74(("●"))
+        __gstate_initial_706172656e74 --> child
+        child(["child"])
+    end
+    __gstate_state_e99baa(["雪"])
+    __gstate_state_5f5f6773746174655f7374617274 -->|"INC / increment"| __gstate_state_5f5f6773746174655f7374617274
+    __gstate_state_5f5f6773746174655f7374617274 -->|"always [guard] / automatic"| __gstate_state_5f5f6773746174655f7374617274
+    __gstate_state_5f5f6773746174655f7374617274 -->|"after 1000ms / timeout"| __gstate_state_5f5f6773746174655f7374617274
+    __gstate_invoke_5f5f6773746174655f7374617274{"same"}
+    __gstate_state_5f5f6773746174655f7374617274 --> __gstate_invoke_5f5f6773746174655f7374617274
+    __gstate_invoke_5f5f6773746174655f7374617274 -->|"invoke.done"| a_b
+    __gstate_invoke_5f5f6773746174655f7374617274 -->|"invoke.error"| __gstate_state_612d62
+    __start -->|"INC / increment"| __start
+    __start -->|"always [guard] / automatic"| __start
+    __start -->|"after 1000ms / timeout"| __start
+    __gstate_invoke_5f5f7374617274{"same"}
+    __start --> __gstate_invoke_5f5f7374617274
+    __gstate_invoke_5f5f7374617274 -->|"invoke.done"| a_b
+    __gstate_invoke_5f5f7374617274 -->|"invoke.error"| __gstate_state_612d62
+    __gstate_state_612d62 -->|"INC / increment"| __gstate_state_612d62
+    __gstate_state_612d62 -->|"always [guard] / automatic"| __gstate_state_612d62
+    __gstate_state_612d62 -->|"after 1000ms / timeout"| __gstate_state_612d62
+    __gstate_invoke_612d62{"same"}
+    __gstate_state_612d62 --> __gstate_invoke_612d62
+    __gstate_invoke_612d62 -->|"invoke.done"| a_b
+    __gstate_invoke_612d62 -->|"invoke.error"| __gstate_state_612d62
+    __gstate_state_612d625f696e766f6b65 -->|"INC / increment"| __gstate_state_612d625f696e766f6b65
+    __gstate_state_612d625f696e766f6b65 -->|"always [guard] / automatic"| __gstate_state_612d625f696e766f6b65
+    __gstate_state_612d625f696e766f6b65 -->|"after 1000ms / timeout"| __gstate_state_612d625f696e766f6b65
+    __gstate_invoke_612d625f696e766f6b65{"same"}
+    __gstate_state_612d625f696e766f6b65 --> __gstate_invoke_612d625f696e766f6b65
+    __gstate_invoke_612d625f696e766f6b65 -->|"invoke.done"| a_b
+    __gstate_invoke_612d625f696e766f6b65 -->|"invoke.error"| __gstate_state_612d62
+    a_b -->|"INC / increment"| a_b
+    a_b -->|"always [guard] / automatic"| a_b
+    a_b -->|"after 1000ms / timeout"| a_b
+    __gstate_invoke_615f62{"same"}
+    a_b --> __gstate_invoke_615f62
+    __gstate_invoke_615f62 -->|"invoke.done"| a_b
+    __gstate_invoke_615f62 -->|"invoke.error"| __gstate_state_612d62
+    __gstate_state_656e64 -->|"INC / increment"| __gstate_state_656e64
+    __gstate_state_656e64 -->|"always [guard] / automatic"| __gstate_state_656e64
+    __gstate_state_656e64 -->|"after 1000ms / timeout"| __gstate_state_656e64
+    __gstate_invoke_656e64{"same"}
+    __gstate_state_656e64 --> __gstate_invoke_656e64
+    __gstate_invoke_656e64 -->|"invoke.done"| a_b
+    __gstate_invoke_656e64 -->|"invoke.error"| __gstate_state_612d62
+    __gstate_state_e99baa -->|"INC / increment"| __gstate_state_e99baa
+    __gstate_state_e99baa -->|"always [guard] / automatic"| __gstate_state_e99baa
+    __gstate_state_e99baa -->|"after 1000ms / timeout"| __gstate_state_e99baa
+    __gstate_invoke_e99baa{"same"}
+    __gstate_state_e99baa --> __gstate_invoke_e99baa
+    __gstate_invoke_e99baa -->|"invoke.done"| a_b
+    __gstate_invoke_e99baa -->|"invoke.error"| __gstate_state_612d62

@@ -181,6 +181,7 @@ type SCXMLTransition struct {
 type SCXMLOnEntry struct {
 	XMLName      xml.Name     `xml:"onentry"`
 	SendElements []*SCXMLSend `xml:"send,omitempty"`
+	Logs         []*SCXMLLog  `xml:"log,omitempty"`
 }
 
 // UnmarshalXML handles <onentry> with unknown children (raise, datamodel, etc.).
@@ -193,6 +194,12 @@ func (e *SCXMLOnEntry) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) er
 		switch t := tok.(type) {
 		case xml.StartElement:
 			switch t.Name.Local {
+			case "log":
+				log := &SCXMLLog{}
+				if err := dec.DecodeElement(log, &t); err != nil {
+					return err
+				}
+				e.Logs = append(e.Logs, log)
 			case "send":
 				se := &SCXMLSend{}
 				if err := dec.DecodeElement(se, &t); err != nil {
@@ -212,12 +219,29 @@ func (e *SCXMLOnEntry) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) er
 
 // SCXMLOnExit wraps executable content on state exit.
 type SCXMLOnExit struct {
-	XMLName xml.Name `xml:"onexit"`
+	XMLName xml.Name    `xml:"onexit"`
+	Logs    []*SCXMLLog `xml:"log,omitempty"`
 }
 
 // UnmarshalXML handles <onexit> with unknown children.
 func (e *SCXMLOnExit) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) error {
-	return dec.Skip()
+	type plain SCXMLOnExit
+	return dec.DecodeElement((*plain)(e), &start)
+}
+
+// SCXMLLog carries a descriptive action label. Go callbacks cannot be exported.
+type SCXMLLog struct {
+	Label string `xml:"label,attr"`
+}
+
+func actionDescription(label, fallback string) string {
+	if label != "" {
+		return label
+	}
+	return fallback
+}
+func delayedEventID[S ~string](id S, index int) string {
+	return fmt.Sprintf("_delay.%x.%d", string(id), index)
 }
 
 // SCXMLInvoke represents an <invoke> element.
@@ -298,23 +322,23 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 	}
 
 	if len(def.Entry) > 0 {
-		node.OnEntry = &SCXMLOnEntry{}
+		node.OnEntry = &SCXMLOnEntry{Logs: []*SCXMLLog{{Label: actionDescription(def.entryLabel, "entry action")}}}
 	}
 
 	if len(def.Delayed) > 0 {
 		if node.OnEntry == nil {
 			node.OnEntry = &SCXMLOnEntry{}
 		}
-		for _, t := range def.Delayed {
+		for i, t := range def.Delayed {
 			node.OnEntry.SendElements = append(node.OnEntry.SendElements, &SCXMLSend{
-				Event: fmt.Sprintf("_delay.%s", def.ID),
+				Event: delayedEventID(def.ID, i),
 				Delay: formatDuration(t.After),
 			})
 		}
 	}
 
 	if len(def.Exit) > 0 {
-		node.OnExit = &SCXMLOnExit{}
+		node.OnExit = &SCXMLOnExit{Logs: []*SCXMLLog{{Label: actionDescription(def.exitLabel, "exit action")}}}
 	}
 
 	// Use eventOrder to preserve declaration order of transitions
@@ -328,8 +352,8 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 		node.Transitions = append(node.Transitions, convertTransition(t, ""))
 	}
 
-	for _, t := range def.Delayed {
-		eventName := fmt.Sprintf("_delay.%s", def.ID)
+	for i, t := range def.Delayed {
+		eventName := delayedEventID(def.ID, i)
 		node.Transitions = append(node.Transitions, convertTransition(t, eventName))
 	}
 
@@ -385,10 +409,10 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 func convertFinalNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D], m *Machine[S, E, D]) (SCXMLNode, error) {
 	node := SCXMLNode{Kind: NodeFinal, ID: string(def.ID)}
 	if len(def.Entry) > 0 {
-		node.OnEntry = &SCXMLOnEntry{}
+		node.OnEntry = &SCXMLOnEntry{Logs: []*SCXMLLog{{Label: actionDescription(def.entryLabel, "entry action")}}}
 	}
 	if len(def.Exit) > 0 {
-		node.OnExit = &SCXMLOnExit{}
+		node.OnExit = &SCXMLOnExit{Logs: []*SCXMLLog{{Label: actionDescription(def.exitLabel, "exit action")}}}
 	}
 	return node, nil
 }

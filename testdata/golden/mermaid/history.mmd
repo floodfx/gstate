@@ -5,11 +5,13 @@ config:
     fontSize: 16px
 ---
 flowchart TB
-    __start(("●"))
-    __start --> parent
+    __gstate_start(("●"))
+    __gstate_start --> parent
     other(["other"])
     subgraph parent ["parent"]
-        parent_hist(("[H]"))
+        __gstate_history_706172656e74(("[H]"))
+        __gstate_initial_706172656e74(("●"))
+        __gstate_initial_706172656e74 --> s1
         s1(["s1"])
         s2(["s2"])
     end

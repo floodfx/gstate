@@ -1,10 +1,8 @@
 name: Mermaid truth
 
-# Runs the truth-tier verification: real mermaid-js parses + renders each
-# golden .mmd through @mermaid-js/mermaid-cli and compares the SVG snapshot
-# against the checked-in copy. Gated out of the main `Go` workflow so
-# contributors without Node still pass `just ci`. Drift here means our
-# emitted Mermaid no longer renders the way we last blessed it.
+# The pinned Mermaid CLI parses and renders each golden .mmd. Tests also
+# require a nonempty checked-in SVG for human review. Coordinates are not
+# byte-compared; this workflow checks renderability and artifact presence.
 
 on:
   pull_request:
@@ -30,7 +28,7 @@ permissions:
 
 jobs:
   truth:
-    name: render + snapshot via mermaid-cli
+    name: parse + render via mermaid-cli
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

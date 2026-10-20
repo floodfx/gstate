@@ -83,7 +83,7 @@ mermaid-cli-version := "11.15.0"
 mermaid-verify:
     UPDATE_GOLDEN=1 go test -count=1 -run TestMermaidGoldens .
     @mkdir -p testdata/golden/mermaid/svg
-    @for mmd in testdata/golden/mermaid/*.mmd; do \
+    @set -e; for mmd in testdata/golden/mermaid/*.mmd; do \
         name=$(basename $mmd .mmd); \
         echo "rendering $name"; \
         npx -y @mermaid-js/mermaid-cli@{{mermaid-cli-version}} \
