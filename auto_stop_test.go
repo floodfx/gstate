@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"go.uber.org/goleak"
 )
@@ -366,5 +367,103 @@ func TestAutoStopOnHydratedFinal(t *testing.T) {
 
 	if err := a.SendCtx(context.Background(), "x"); !errors.Is(err, ErrActorStopped) {
 		t.Fatalf("post-auto-stop SendCtx err = %v, want ErrActorStopped", err)
+	}
+}
+
+func TestAutoStopOnInvokeCompletionAndSynchronousShutdown(t *testing.T) {
+	done := make(chan struct{})
+	received := make(chan struct{}, 1)
+	m := New[StateID, EventID, Context]("invoke_final").
+		Initial("a").
+		State("a", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Invoke(func(context.Context, Context, func(func(Context) Context)) error {
+				return nil
+			}, "done", "")
+		}).
+		State("done", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Type(Final)
+		}).
+		Build()
+
+	obs := ObserverFuncs[StateID, EventID, Context]{
+		TransitionFunc: func(context.Context, *TransitionEvent[StateID, EventID, Context]) {
+			close(done)
+		},
+		EventReceivedFunc: func(context.Context, *EventNotice[StateID, EventID, Context]) {
+			received <- struct{}{}
+		},
+	}
+	a := Start(m, Context{}, m.WithObservers(obs))
+	defer a.Stop()
+
+	<-done
+	if got := a.State(); got != "done" {
+		t.Fatalf("State() = %q, want \"done\"", got)
+	}
+	err := a.SendCtx(context.Background(), "marker")
+	if !errors.Is(err, ErrActorStopped) {
+		select {
+		case <-received:
+			t.Fatal("actor processed event after Invoke reached Final")
+		case <-time.After(time.Second):
+		}
+		t.Fatalf("SendCtx after Invoke Final err = %v, want ErrActorStopped", err)
+	}
+}
+
+func TestAutoStopOnDelayedTransitionAndCancelsOtherRegionInvoke(t *testing.T) {
+	// A real timer duration is the behavior under test; channels synchronize
+	// invoke startup, invoke cancellation, and transition completion.
+	invokeStarted := make(chan struct{})
+	invokeCancelled := make(chan struct{})
+	transitioned := make(chan struct{})
+
+	m := New[StateID, EventID, Context]("timer_final_cancel").
+		Initial("par").
+		State("par", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Type(Parallel)
+			s.State("r1", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Initial("r1_wait")
+				s.State("r1_wait", func(s *StateBuilder[StateID, EventID, Context]) {
+					s.After(time.Nanosecond).GoTo("r1_mid")
+				})
+				s.State("r1_mid", func(s *StateBuilder[StateID, EventID, Context]) {
+					s.Always().GoTo("top_done")
+				})
+			})
+			s.State("r2", func(s *StateBuilder[StateID, EventID, Context]) {
+				s.Initial("r2_work")
+				s.State("r2_work", func(s *StateBuilder[StateID, EventID, Context]) {
+					s.Invoke(func(ctx context.Context, _ Context, _ func(func(Context) Context)) error {
+						close(invokeStarted)
+						<-ctx.Done()
+						close(invokeCancelled)
+						return ctx.Err()
+					}, "", "")
+				})
+			})
+		}).
+		State("top_done", func(s *StateBuilder[StateID, EventID, Context]) {
+			s.Type(Final)
+		}).
+		Build()
+
+	obs := ObserverFuncs[StateID, EventID, Context]{
+		TransitionFunc: func(_ context.Context, e *TransitionEvent[StateID, EventID, Context]) {
+			if e.To == "top_done" {
+				close(transitioned)
+			}
+		},
+	}
+	a := Start(m, Context{}, m.WithObservers(obs))
+	defer a.Stop()
+
+	<-invokeStarted
+	<-transitioned
+	<-invokeCancelled
+	<-a.stopped
+
+	if err := a.SendCtx(context.Background(), "AFTER"); !errors.Is(err, ErrActorStopped) {
+		t.Fatalf("SendCtx after delayed+Always Final err = %v, want ErrActorStopped", err)
 	}
 }
