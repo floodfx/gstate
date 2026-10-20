@@ -3,6 +3,7 @@ package gstate
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -368,39 +369,41 @@ func TestSortedActiveStatesDeterministicTieBreaker(t *testing.T) {
 	}
 }
 
-// TestSortedActiveColdConcurrentReads verifies that concurrent calls to State()
-// and States() on a freshly hydrated actor (before any read has populated the
-// cache) do not race.
-func TestSortedActiveColdConcurrentReads(t *testing.T) {
-	type S = string
-	type E = string
-	type D = cacheCtx
-
-	m := New[S, E, D]("cold").
-		Initial("a").
-		State("a", func(_ *StateBuilder[S, E, D]) {}).
-		Build()
-
-	a := Hydrate(m, Snapshot[S, D]{Active: []S{"a"}})
-	defer a.Stop()
-
-	gate := make(chan struct{})
-	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-gate
-			if states := a.States(); len(states) != 1 || states[0] != "a" {
-				t.Errorf("States() = %v, want [a]", states)
+// TestSortedActiveConcurrentReads exercises both the warmed hydration cache and
+// the retained nil-cache fallback without allowing readers to populate it.
+func TestSortedActiveConcurrentReads(t *testing.T) {
+	for _, name := range []string{"hydrated", "uncached"} {
+		t.Run(name, func(t *testing.T) {
+			m := New[string, string, cacheCtx]("reads").Initial("a").State("a", func(*StateBuilder[string, string, cacheCtx]) {}).Build()
+			a := Hydrate(m, Snapshot[string, cacheCtx]{Active: []string{"a"}})
+			defer a.Stop()
+			if name == "uncached" {
+				a.mu.Lock()
+				a.sortedActive = nil
+				a.mu.Unlock()
 			}
-			if state := a.State(); state != "a" {
-				t.Errorf("State() = %q, want \"a\"", state)
+			gate := make(chan struct{})
+			var wg sync.WaitGroup
+			for i := 0; i < 32; i++ {
+				wg.Go(func() {
+					<-gate
+					if got := a.States(); !slices.Equal(got, []string{"a"}) {
+						t.Errorf("states=%v", got)
+					}
+					if got := a.State(); got != "a" {
+						t.Errorf("state=%q", got)
+					}
+				})
 			}
-		}()
+			close(gate)
+			wg.Wait()
+			a.mu.RLock()
+			defer a.mu.RUnlock()
+			if name == "uncached" && a.sortedActive != nil {
+				t.Fatal("read-only fallback published a cache")
+			}
+		})
 	}
-	close(gate)
-	wg.Wait()
 }
 
 // TestSortedActiveConcurrentReadsDuringTransitions verifies that concurrent
@@ -428,48 +431,54 @@ func TestSortedActiveConcurrentReadsDuringTransitions(t *testing.T) {
 		Build()
 
 	const rounds = 50
-	done := make(chan struct{})
-	count := 0
-	obs := ObserverFuncs[S, E, D]{
-		TransitionFunc: func(_ context.Context, _ *TransitionEvent[S, E, D]) {
-			count++
-			if count == rounds {
-				close(done)
-			}
-		},
-	}
-
+	transitioned := make(chan struct{}, 1)
+	obs := ObserverFuncs[string, string, cacheCtx]{TransitionFunc: func(context.Context, *TransitionEvent[string, string, cacheCtx]) { transitioned <- struct{}{} }}
 	a := Start(m, cacheCtx{}, m.WithObservers(obs))
 	defer a.Stop()
-
-	stopReaders := make(chan struct{})
+	requests := make([]chan struct{}, 8)
+	readDone := make(chan struct{}, 8)
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-stopReaders:
-					return
-				default:
-					states := a.States()
-					if len(states) != 2 {
-						t.Errorf("unexpected states length: %v", states)
-					}
-					leaf := a.State()
-					if leaf != "left.child" && leaf != "right.child" {
-						t.Errorf("unexpected leaf state: %q", leaf)
-					}
+	for i := range requests {
+		requests[i] = make(chan struct{})
+		request := requests[i]
+		wg.Go(func() {
+			for range request {
+				got := a.States()
+				if !slices.Equal(got, []string{"left", "left.child"}) && !slices.Equal(got, []string{"right", "right.child"}) {
+					t.Errorf("invalid complete configuration: %v", got)
 				}
+				if leaf := a.State(); leaf != "left.child" && leaf != "right.child" {
+					t.Errorf("invalid leaf=%q", leaf)
+				}
+				readDone <- struct{}{}
 			}
-		}()
+		})
 	}
-
-	for i := 0; i < rounds; i++ {
-		a.Send("SWAP")
+	// Every reader acknowledges a read before another transition is submitted.
+	// The first round also proves that all readers started before the sequence.
+	for i := 0; i <= rounds; i++ {
+		if i > 0 {
+			a.Send("SWAP")
+		}
+		for _, request := range requests {
+			request <- struct{}{}
+		}
+		for range requests {
+			<-readDone
+		}
+		if i > 0 {
+			<-transitioned
+		}
+		want := []string{"left", "left.child"}
+		if i%2 == 1 {
+			want = []string{"right", "right.child"}
+		}
+		if got := a.States(); !slices.Equal(got, want) {
+			t.Errorf("round %d states=%v, want %v", i, got, want)
+		}
 	}
-	<-done
-	close(stopReaders)
+	for _, request := range requests {
+		close(request)
+	}
 	wg.Wait()
 }

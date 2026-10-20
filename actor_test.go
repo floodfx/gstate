@@ -1,8 +1,8 @@
 package gstate
 
 import (
+	"context"
 	"testing"
-	"time"
 )
 
 func TestActorBasic(t *testing.T) {
@@ -16,20 +16,22 @@ func TestActorBasic(t *testing.T) {
 		}).
 		Build()
 
-	actor := Start(m, Context{Count: 0})
+	step := make(chan struct{}, 1)
+	actor := Start(m, Context{}, m.WithObservers(ObserverFuncs[StateID, EventID, Context]{TransitionFunc: func(context.Context, *TransitionEvent[StateID, EventID, Context]) { step <- struct{}{} }}))
+	defer actor.Stop()
 
 	if actor.State() != "idle" {
 		t.Errorf("Expected initial state 'idle', got %s", actor.State())
 	}
 
 	actor.Send("START")
-	time.Sleep(10 * time.Millisecond)
+	<-step
 	if actor.State() != "active" {
 		t.Errorf("Expected state 'active' after START event, got %s", actor.State())
 	}
 
 	actor.Send("STOP")
-	time.Sleep(10 * time.Millisecond)
+	<-step
 	if actor.State() != "idle" {
 		t.Errorf("Expected state 'idle' after STOP event, got %s", actor.State())
 	}

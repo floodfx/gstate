@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"sync"
 	"testing"
-	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -180,7 +179,6 @@ func BenchmarkSendTransition_ThreeTransitionObservers(b *testing.B) {
 		waitForTransitions(b, m, 100, obs1, obs2)
 	}
 }
-
 
 func BenchmarkSendTransition_RecordingObserver(b *testing.B) {
 	m := pingPongMachine()
@@ -717,8 +715,8 @@ func BenchmarkHydrate(b *testing.B) {
 // Phase 7: Allocation Assertion
 // ---------------------------------------------------------------------------
 
-func BenchmarkSendTransition_ZeroAlloc(b *testing.B) {
-	// Verifies the no-observer hot path is allocation-free per event.
+func BenchmarkSendTransitionLifecycle(b *testing.B) {
+	// Exercises Start, 100 transitions, and Stop, including lifecycle allocations.
 	m := countingPingPongMachine(100)
 
 	b.ReportAllocs()
@@ -739,31 +737,15 @@ func BenchmarkSendTransition_ZeroAlloc(b *testing.B) {
 	}
 }
 
-// TestSendTransition_ZeroAllocCheck is a test (not benchmark) that asserts
-// zero allocations on the no-observer send path using AllocsPerRun.
-func TestSendTransition_ZeroAllocCheck(t *testing.T) {
-	m := pingPongMachine()
-
-	// Pre-warm: start an actor, send one event, stop it.
-	actor := Start(m, benchCtx{})
-	actor.Send(bEVPong)
-	time.Sleep(10 * time.Millisecond)
-	actor.Stop()
-
-	// Now measure. Note: the actor's loop goroutine processes events,
-	// so Send itself just enqueues to a buffered channel. The allocation
-	// check is on the Send path (mailbox enqueue), not the processing.
-	allocs := testing.AllocsPerRun(100, func() {
-		actor := Start(m, benchCtx{})
-		actor.Send(bEVPong)
-		actor.Send(bEVPing)
-		// We can't easily wait for processing without an observer,
-		// so we just measure the enqueue path.
-		actor.Stop()
-	})
-
-	// Start/Stop have allocations (goroutine, channels). We're checking
-	// the per-event overhead is bounded. With Start/Stop overhead,
-	// we allow a reasonable budget.
-	t.Logf("AllocsPerRun (Start + 2 Sends + Stop): %.1f", allocs)
+// TestSendMailboxEnqueueAllocations measures only the documented enqueue path.
+// A mailbox without a consumer removes asynchronous interpreter allocations.
+func TestSendMailboxEnqueueAllocations(t *testing.T) {
+	actor := &Actor[benchState, benchEvent, benchCtx]{mailbox: make(chan envelope[benchEvent], 128), stopped: make(chan struct{})}
+	allocations := testing.AllocsPerRun(100, func() { actor.Send(bEVPong) })
+	if allocations != 0 {
+		t.Fatalf("Send enqueue allocations=%v, want 0", allocations)
+	}
+	if got := len(actor.mailbox); got != 101 {
+		t.Fatalf("enqueued=%d, want 101 including warmup", got)
+	}
 }
