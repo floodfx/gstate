@@ -69,24 +69,36 @@ func createLazyTestMachine() *Machine[lState, lEvent, countingCloner] {
 		Build()
 }
 
+type metadataCompletion struct {
+	BaseObserver[lState, lEvent, countingCloner]
+	done chan struct{}
+}
+
+func (o metadataCompletion) OnEventDropped(context.Context, *EventNotice[lState, lEvent, countingCloner]) {
+	close(o.done)
+}
+
 func TestNoObserver_ZeroClones(t *testing.T) {
 	var cloneCount atomic.Int64
 	initial := countingCloner{Count: 42, cloneCount: &cloneCount}
 	m := createLazyTestMachine()
 
-	bar := &testTransitionBarrier{done: make(chan struct{})}
-	a := Start(m, initial, m.WithObservers(bar))
+	// Metadata-only observers provide a completion signal without subscribing
+	// to any data-bearing payload.
+	done := make(chan struct{})
+	obs := metadataCompletion{done: done}
+	a := Start(m, initial, m.WithObservers(obs))
 	defer a.Stop()
-
 	a.Send("GO")
-	<-bar.done
+	a.Send("MARKER")
+	<-done
 
 	if got := cloneCount.Load(); got != 0 {
 		t.Errorf("expected 0 clones with no observer, got %d", got)
 	}
 }
 
-func TestObserverNoDataCall_ZeroClones(t *testing.T) {
+func TestObserverNoDataCall_EventTimeClone(t *testing.T) {
 	var cloneCount atomic.Int64
 	initial := countingCloner{Count: 42, cloneCount: &cloneCount}
 	m := createLazyTestMachine()
@@ -99,8 +111,8 @@ func TestObserverNoDataCall_ZeroClones(t *testing.T) {
 	a.Send("GO")
 	<-bar.done
 
-	if got := cloneCount.Load(); got != 0 {
-		t.Errorf("expected 0 clones when observer ignores Data, got %d", got)
+	if got := cloneCount.Load(); got != 1 {
+		t.Errorf("expected 1 event-time clone when observer ignores Data, got %d", got)
 	}
 }
 

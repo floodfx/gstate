@@ -17,11 +17,10 @@ import (
 //     [GuardObserver], etc.) to receive specific hooks.
 //  3. Register your observer by passing the output of [Machine.WithObservers] as an [Option] to [Start].
 //
-// Hook methods receive event structures containing metadata and an unexported copy of
-// the actor's context data at the time of the event. Call `e.Data()` on any event payload
-// to retrieve a pointer to this data. The copy is evaluated lazily on the first `Data()` call
-// using [sync.Once] (via [Cloner.Clone()] when implemented, or value copying otherwise), so
-// observers only pay for deep-copying if they read the data.
+// Data-bearing payloads capture an independent Clone under the actor lock at
+// event creation. Data() returns a cached pointer shared by subscribers to that
+// payload. Treat it as read-only. Retaining the payload or marshaling it later
+// preserves event-time values. No payload or clone is created for unsubscribed kinds.
 //
 // Threading and locking contract:
 //
@@ -40,7 +39,8 @@ import (
 //     into the actor, do it from a fresh goroutine
 //     (e.g. `go func() { actor.Send(EventX) }()`).
 //   - OnInvokeCompleted fires from the invoke goroutine and does not hold the
-//     actor lock.
+//     actor lock. It must not call Stop synchronously: Stop waits for this
+//     invocation goroutine to return. Schedule Stop from another goroutine.
 //
 // To implement a subset of the methods, embed [BaseObserver] and implement
 // only the narrow interfaces needed.
@@ -92,7 +92,6 @@ type EventDroppedObserver[S ~string, E ~string, D Cloner[D]] interface {
 	OnEventDropped(context.Context, *EventNotice[S, E, D])
 }
 
-
 // ActorID is the stable identifier for a running [Actor]. It is generated on
 // [Start] (unless overridden via [WithActorID]) and survives [Actor.Snapshot]
 // and [Hydrate] so telemetry can correlate across persistence boundaries.
@@ -114,10 +113,10 @@ const (
 
 // TransitionEvent is the payload for [Observer.OnTransition].
 type TransitionEvent[S ~string, E ~string, D Cloner[D]] struct {
-	MachineID string    `json:"machine_id"`
-	ActorID   ActorID   `json:"actor_id"`
-	From      S         `json:"from"`
-	To        S         `json:"to"`
+	MachineID string  `json:"machine_id"`
+	ActorID   ActorID `json:"actor_id"`
+	From      S       `json:"from"`
+	To        S       `json:"to"`
 	// Event is the triggering event. Zero value when the transition fires from
 	// an Always, Delayed, or invoke-completion path.
 	Event     E         `json:"event,omitempty"`
@@ -161,9 +160,9 @@ func (e *TransitionEvent[S, E, D]) String() string {
 // only when the transition defines a non-nil Guard, so the absence of an
 // event does not imply the absence of guard evaluation.
 type GuardEvent[S ~string, E ~string, D Cloner[D]] struct {
-	MachineID string    `json:"machine_id"`
-	ActorID   ActorID   `json:"actor_id"`
-	State     S         `json:"state"`
+	MachineID string  `json:"machine_id"`
+	ActorID   ActorID `json:"actor_id"`
+	State     S       `json:"state"`
 	// Event is the triggering event. Zero value for Always guards.
 	Event     E         `json:"event,omitempty"`
 	Target    S         `json:"target"`

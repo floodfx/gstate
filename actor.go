@@ -351,7 +351,7 @@ func (a *Actor[S, E, D]) installObservers(observers []Observer[S, E, D]) {
 }
 
 func (a *Actor[S, E, D]) newTransitionEvent(from, to S, event E) *TransitionEvent[S, E, D] {
-	return &TransitionEvent[S, E, D]{
+	e := &TransitionEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		From:      from,
@@ -360,10 +360,13 @@ func (a *Actor[S, E, D]) newTransitionEvent(from, to S, event E) *TransitionEven
 		Timestamp: time.Now(),
 		data:      a.data,
 	}
+	// Capture independent data under the actor lock before user callbacks run.
+	e.Data()
+	return e
 }
 
 func (a *Actor[S, E, D]) newGuardEvent(state S, event E, target S, result bool) *GuardEvent[S, E, D] {
-	return &GuardEvent[S, E, D]{
+	e := &GuardEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		State:     state,
@@ -373,6 +376,9 @@ func (a *Actor[S, E, D]) newGuardEvent(state S, event E, target S, result bool) 
 		Timestamp: time.Now(),
 		data:      a.data,
 	}
+	// Capture independent data under the actor lock before user callbacks run.
+	e.Data()
+	return e
 }
 
 func (a *Actor[S, E, D]) newInvokeEvent(state S, err error, d time.Duration) *InvokeEvent[S, E, D] {
@@ -387,17 +393,20 @@ func (a *Actor[S, E, D]) newInvokeEvent(state S, err error, d time.Duration) *In
 }
 
 func (a *Actor[S, E, D]) newStateEvent(state S) *StateEvent[S, E, D] {
-	return &StateEvent[S, E, D]{
+	e := &StateEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		State:     state,
 		Timestamp: time.Now(),
 		data:      a.data,
 	}
+	// Capture independent data under the actor lock before user callbacks run.
+	e.Data()
+	return e
 }
 
 func (a *Actor[S, E, D]) newActionEvent(state S, event E, target S) *ActionEvent[S, E, D] {
-	return &ActionEvent[S, E, D]{
+	e := &ActionEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
 		State:     state,
@@ -406,6 +415,9 @@ func (a *Actor[S, E, D]) newActionEvent(state S, event E, target S) *ActionEvent
 		Timestamp: time.Now(),
 		data:      a.data,
 	}
+	// Capture independent data under the actor lock before user callbacks run.
+	e.Data()
+	return e
 }
 
 func (a *Actor[S, E, D]) newEventNotice(event E, reason string) *EventNotice[S, E, D] {
