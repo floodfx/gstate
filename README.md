@@ -594,6 +594,8 @@ actor.Stop()
 
 `actor.Done()` returns a stable receive-only channel that closes after shutdown, the mailbox loop, all invoke functions, and their completion callbacks finish. It also closes after automatic completion or a terminal runtime error. It stays open while an invoke ignores cancellation. User-spawned goroutines and already firing timer callbacks are not awaited.
 
+`actor.StopCtx(ctx)` requests the same shutdown and waits for `Done` or context cancellation. It returns `ctx.Err()` if the wait expires and termination is still pending. The deadline also bounds waiting for the actor lock. Shutdown continues after a timeout, and `Done` stays open until tracked work finishes. An already cancelled context still requests shutdown; an actor whose `Done` is already closed returns nil. A timeout does not kill goroutines. You can wait again with another context or call `Stop()` to await completion.
+
 `Stop()` cancels all running invocations and timers, then waits for in-flight work to drain before returning. It is safe to call multiple times — only the first call performs the shutdown.
 
 **Guaranteed finished before `Stop` returns:**

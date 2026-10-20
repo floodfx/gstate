@@ -52,12 +52,13 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// It is cleared as soon as Invoke.Func returns or the state exits.
 	invokeGens map[S]uint64
 	// nextGen tracks the monotonic generation count for state entries.
-	nextGen     uint64
-	timers      map[S][]*time.Timer
-	mailbox     chan envelope[E]
-	mu          sync.RWMutex
-	stopOnce    sync.Once
-	terminalErr error
+	nextGen         uint64
+	timers          map[S][]*time.Timer
+	mailbox         chan envelope[E]
+	mu              sync.RWMutex
+	stopOnce        sync.Once
+	stopRequestOnce sync.Once
+	terminalErr     error
 	// stopped is closed exactly once by Stop to signal shutdown to the loop
 	// goroutine and to any caller parked in [Actor.SendCtx]'s select. Using a
 	// dedicated channel (rather than closing the mailbox) avoids the
@@ -581,6 +582,41 @@ func (a *Actor[S, E, D]) Stop() {
 	// Wait for the loop goroutine and every invoke goroutine to return
 	// before declaring shutdown complete.
 	<-a.done
+}
+
+// StopCtx requests shutdown and waits for Done or ctx cancellation. The context
+// bounds the caller's wait, including time spent waiting for an action or
+// observer to release the actor lock. Shutdown continues after ctx expires;
+// cancellation never kills an invoke or another goroutine. Done stays open
+// until tracked work finishes. An already cancelled context still requests
+// shutdown. Once Done is closed, StopCtx returns nil even for a cancelled ctx.
+// Do not call StopCtx synchronously from actor callbacks; see Stop.
+func (a *Actor[S, E, D]) StopCtx(ctx context.Context) error {
+	select {
+	case <-a.done:
+		return nil
+	default:
+	}
+	// At most one asynchronous request can wait for the actor lock, regardless
+	// of how many callers abandon their waits. Stop retains its synchronous path.
+	a.stopRequestOnce.Do(func() {
+		go func() {
+			a.mu.Lock()
+			a.initiateShutdownLocked()
+			a.mu.Unlock()
+		}()
+	})
+	select {
+	case <-a.done:
+		return nil
+	case <-ctx.Done():
+		select {
+		case <-a.done:
+			return nil
+		default:
+			return ctx.Err()
+		}
+	}
 }
 
 // Done returns a stable channel closed after shutdown, the mailbox loop, all
