@@ -400,7 +400,7 @@ actor := gstate.Start(machine, MyData{}, machine.WithObservers(rec))
       go func() { actor.Send(EventX) }()
   }
   ```
-- Payload structs expose data via a lazy `Data()` method (rather than a field). The first call to `e.Data()` clones the actor's data via `Cloner.Clone()` and caches the result with `sync.Once`; subsequent calls (including from other observers receiving the same payload pointer) return the cached pointer without re-cloning. Observers that don't need the data pay zero clones. Reading is safe; mutating the pointee has no effect on the actor.
+- Data-bearing payloads clone the actor's data under its lock at event creation. `e.Data()` returns a cached pointer shared across subscribers; treat it as read-only. Retained payloads and deferred JSON preserve event-time values. Unsubscribed kinds create no payload or clone. Metadata-only event and invoke hooks do not clone data.
 - When multiple observers subscribe to the same callback kind, the engine builds the payload **once** and passes the same pointer to each. The shared `sync.Once` on the payload guarantees at most one clone per callback firing across the whole fan-out.
 - `OnInvokeCompleted` fires from the invoke goroutine and does not hold the actor lock.
 
