@@ -724,17 +724,17 @@ config:
     fontSize: 16px
 ---
 flowchart TB
-    __start(("●"))
-    __start --> idle
+    __gstate_start(("●"))
+    __gstate_start --> idle
     calling_llm(["calling_llm"])
     checking_response(["checking_response"])
     done((("done")))
     failed((("failed")))
     idle(["idle<br/>entry / startEngine<br/>exit / stopEngine"])
-    call_llm{"call_llm"}
-    calling_llm --> call_llm
-    call_llm -->|"invoke.done"| checking_response
-    call_llm -->|"invoke.error"| failed
+    __gstate_invoke_63616c6c696e675f6c6c6d{"call_llm"}
+    calling_llm --> __gstate_invoke_63616c6c696e675f6c6c6d
+    __gstate_invoke_63616c6c696e675f6c6c6d -->|"invoke.done"| checking_response
+    __gstate_invoke_63616c6c696e675f6c6c6d -->|"invoke.error"| failed
     checking_response -->|"OK"| done
     idle -->|"BEGIN"| calling_llm
 ```
@@ -764,7 +764,7 @@ Also available:
 | Final states | ✓ | ✓ |
 | Guards (with labels) | ✓ | ✓ (`cond`) |
 | Entry/exit actions | ✓ (notes) | ✓ |
-| Delayed transitions | ✓ | ✓ (`<send>` + `after.*`) |
+| Delayed transitions | ✓ | ✓ (`<send>` + `_delay.<hex>.<index>`) |
 | History (shallow/deep) | ✓ (notes) | ✓ (`<history>`) |
 | Invoke (onDone/onError) | ✓ | ✓ |
 | Action labels | ✓ | ✓ (`<assign>`) |
