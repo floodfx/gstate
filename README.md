@@ -660,11 +660,11 @@ A `Snapshot` contains:
 
 `Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID` from the snapshot.
 
-Snapshots contain logical configuration, history, cloned data, and actor identity. They do not preserve queued events, elapsed timer time, or external invocation progress. Hydration clones data and history, restores missing ancestors and parallel regions, and restarts services in deterministic root-to-leaf order. Unknown active IDs are ignored. Conflicting children or top-level states use the alphabetically first requested state; empty configurations fall back to the machine initial. Missing compound children use valid history or their initial state. Entry actions are skipped.
+Snapshots contain logical configuration, history, cloned data, and actor identity. They do not preserve queued events, elapsed timer time, or external invocation progress. Hydration clones data and history, restores missing ancestors and parallel regions, and restarts services in deterministic root-to-leaf order. Unknown active IDs are ignored. Conflicting children or top-level states use the alphabetically first requested state; empty configurations fall back to the machine initial. Missing compound children use valid history or their initial state. Entry actions are skipped for restored states. Before returning, hydration evaluates Always transitions with their actions and normal observer callbacks. Newly entered states run their entry actions, and reaching completion stops the actor synchronously.
 
 `Start` takes ownership of reference-containing initial data. Pass `initialData.Clone()` if you retain a mutable reference. A built machine and all its maps, definitions, callbacks, and retained builder references must remain unchanged while actors or exporters use it. Immutability is a caller contract, not enforced by Go's exported fields.
 
-`Hydrate` does **not** fire `OnStateEntered` or `OnTransition` for the states being restored — those events represent the original state changes that were already observed before the snapshot was captured. Hooks resume firing on the next event, Always evaluation, or invoke completion processed by the hydrated actor.
+`Hydrate` does **not** fire `OnStateEntered` or `OnTransition` for the states being restored, since those events represent the original state changes observed before the snapshot was captured. Hooks resume firing during hydration's Always evaluation and on subsequent events or service transitions.
 
 `Hydrate` accepts the same functional options as `Start`, so you can attach observers or tune the mailbox on a restored actor:
 
