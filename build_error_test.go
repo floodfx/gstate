@@ -72,3 +72,25 @@ func TestBuildWithErrorValidAndRepair(t *testing.T) {
 		t.Fatalf("metadata did not initialize hierarchy: %v", a.States())
 	}
 }
+
+func TestBuildPreservesPanicValueTypes(t *testing.T) {
+	for _, kind := range []string{"structure", "target"} {
+		t.Run(kind, func(t *testing.T) {
+			defer func() {
+				value := recover()
+				if kind == "structure" {
+					if message, ok := value.(string); !ok || message != "gstate: machine initial state is required" {
+						t.Fatalf("structural panic = %T %v, want original string", value, value)
+					}
+				} else if _, ok := value.(error); !ok {
+					t.Fatalf("target panic = %T %v, want error", value, value)
+				}
+			}()
+			b := New[StateID, EventID, Context]("panic-compat")
+			if kind == "target" {
+				b.Initial("missing").State("a", func(*StateBuilder[StateID, EventID, Context]) {})
+			}
+			b.Build()
+		})
+	}
+}
