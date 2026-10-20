@@ -22,7 +22,7 @@ func TestMermaidBasicFlat(t *testing.T) {
 	got := ToMermaid(m)
 
 	assertContains(t, got, "flowchart TB")
-	assertContains(t, got, "__start --> off")
+	assertContains(t, got, "__gstate_start --> off")
 	assertContains(t, got, `off -->|"FLIP"| on`)
 	assertContains(t, got, `on -->|"FLIP"| off`)
 }
@@ -47,7 +47,7 @@ func TestMermaidHierarchy(t *testing.T) {
 
 	got := ToMermaid(m)
 
-	assertContains(t, got, "__start --> parent")
+	assertContains(t, got, "__gstate_start --> parent")
 	assertContains(t, got, `subgraph parent ["parent"]`)
 	assertContains(t, got, `child1 -->|"NEXT"| child2`)
 	assertContains(t, got, `parent -->|"EXIT"| done`)
@@ -219,7 +219,7 @@ func TestMermaidInvoke(t *testing.T) {
 
 	got := ToMermaid(m)
 	// Both paths set → diamond pseudo-state with friendly labels.
-	assertContains(t, got, "loading_invoke{")
+	assertContains(t, got, "__gstate_invoke_6c6f6164696e67{")
 	assertContains(t, got, "invoke.done")
 	assertContains(t, got, "invoke.error")
 }
@@ -465,10 +465,10 @@ func TestMermaidInvokeChoiceDiamond(t *testing.T) {
 		Build()
 	got := ToMermaid(m)
 	// Diamond pseudo-state with synthesized id.
-	assertContains(t, got, "loading_invoke{")
+	assertContains(t, got, "__gstate_invoke_6c6f6164696e67{")
 	// Three transitions: entry to diamond, then done and error outcomes.
-	assertContains(t, got, "loading --> loading_invoke")
-	assertContains(t, got, "loading_invoke -->")
+	assertContains(t, got, "loading --> __gstate_invoke_6c6f6164696e67")
+	assertContains(t, got, "__gstate_invoke_6c6f6164696e67 -->")
 	assertContains(t, got, "invoke.done")
 	assertContains(t, got, "invoke.error")
 	// Targets: success and failure.
@@ -488,9 +488,9 @@ func TestMermaidInvokeLabel(t *testing.T) {
 		Build()
 	got := ToMermaid(m)
 	// Diamond id = label.
-	assertContains(t, got, "call_llm{")
-	assertContains(t, got, "calling_llm --> call_llm")
-	assertContains(t, got, "call_llm -->")
+	assertContains(t, got, "__gstate_invoke_63616c6c696e675f6c6c6d{")
+	assertContains(t, got, "calling_llm --> __gstate_invoke_63616c6c696e675f6c6c6d")
+	assertContains(t, got, "__gstate_invoke_63616c6c696e675f6c6c6d -->")
 	assertContains(t, got, "invoke.done")
 	assertContains(t, got, "invoke.error")
 }
@@ -505,7 +505,7 @@ func TestMermaidInvokeOnlyDone(t *testing.T) {
 		Build()
 	got := ToMermaid(m)
 	// No diamond — direct edge from loading to success.
-	if strings.Contains(got, "loading_invoke{") {
+	if strings.Contains(got, "__gstate_invoke_6c6f6164696e67{") {
 		t.Errorf("expected no diamond for OnDone-only invoke, got:\n%s", got)
 	}
 	assertContains(t, got, "invoke.done")
@@ -522,7 +522,7 @@ func TestMermaidInvokeOnlyError(t *testing.T) {
 		State("failure", func(s *StateBuilder[StateID, EventID, Context]) {}).
 		Build()
 	got := ToMermaid(m)
-	if strings.Contains(got, "loading_invoke{") {
+	if strings.Contains(got, "__gstate_invoke_6c6f6164696e67{") {
 		t.Errorf("expected no diamond for OnError-only invoke, got:\n%s", got)
 	}
 	assertContains(t, got, "invoke.error")
@@ -543,7 +543,7 @@ func TestMermaidNoCustomCSS(t *testing.T) {
 	assertNotContains(t, got, "classDef")
 	assertNotContains(t, got, ":::invoke")
 	// But the diamond shape and invoke edges must still be emitted correctly.
-	assertContains(t, got, "loading_invoke{")
+	assertContains(t, got, "__gstate_invoke_6c6f6164696e67{")
 	assertContains(t, got, "invoke.done")
 	assertContains(t, got, "invoke.error")
 }

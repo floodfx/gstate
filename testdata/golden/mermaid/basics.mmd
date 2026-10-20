@@ -5,8 +5,8 @@ config:
     fontSize: 16px
 ---
 flowchart TB
-    __start(("●"))
-    __start --> idle
+    __gstate_start(("●"))
+    __gstate_start --> idle
     active(["active"])
     idle(["idle"])
     active -->|"STOP"| idle

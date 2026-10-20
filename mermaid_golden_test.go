@@ -23,6 +23,7 @@ func TestMermaidGoldens(t *testing.T) {
 		{"invoke", invokeGoldenMachine()},
 		{"delayed", delayedGoldenMachine()},
 		{"labels", labelsGoldenMachine()},
+		{"identities", exportRegressionMachine()},
 	}
 
 	goldenDir := filepath.Join("testdata", "golden", "mermaid")
@@ -102,6 +103,8 @@ func toMermaidStringAny(m any) string {
 	type state = string
 	type event = string
 	switch v := m.(type) {
+	case *Machine[state, event, Context]:
+		return ToMermaid(v)
 	case *Machine[state, event, goldenCtx]:
 		return ToMermaid(v)
 	default:
@@ -137,4 +140,3 @@ func labelsGoldenMachine() *Machine[string, string, goldenCtx] {
 		}).
 		Build()
 }
-

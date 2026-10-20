@@ -725,11 +725,11 @@ flowchart TB
     idle -->|"BEGIN"| calling_llm
 ```
 
-Labels are Mermaid-only — SCXML export keeps the spec-prescribed `done.invoke.<id>` / `error.platform` event names.
+Invoke labels are Mermaid-only; SCXML export keeps the spec-prescribed `done.invoke.<id>` / `error.platform` event names.
 
 ### SCXML Export
 
-[`ToSCXMLString`](https://pkg.go.dev/github.com/floodfx/gstate#ToSCXMLString) converts a machine to a [W3C SCXML](https://www.w3.org/TR/scxml/) document. This enables interop with SCXML-compatible tools and runtimes.
+[`ToSCXMLString`](https://pkg.go.dev/github.com/floodfx/gstate#ToSCXMLString) converts a machine to a [W3C SCXML](https://www.w3.org/TR/scxml/) document. This is a descriptive export for inspection with SCXML tools. Go guards, actions and invokes are represented by labels and structural placeholders, not executable Go behavior. It does not promise executable SCXML round trips.
 
 ```go
 xml, err := gstate.ToSCXMLString(machine)

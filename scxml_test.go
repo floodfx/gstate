@@ -1276,7 +1276,7 @@ func TestSCXMLDelayedTransitionWithGuardAndAction(t *testing.T) {
 	// Find the delayed transition
 	var delayTr *SCXMLTransition
 	for _, tr := range idle.Transitions {
-		if tr.Event == "_delay.idle" {
+		if tr.Event == "_delay.69646c65.0" {
 			delayTr = tr
 			break
 		}
