@@ -37,38 +37,24 @@ func TestSortedActiveCacheFlat(t *testing.T) {
 
 	expected := [][]S{{"b"}, {"c"}, {"a"}, {"b"}, {"c"}, {"a"}}
 	results := make([][]S, 0, len(expected))
-	var mu sync.Mutex
-	done := make(chan struct{})
+	step := make(chan struct{})
 
 	obs := ObserverFuncs[S, E, D]{
-		TransitionFunc: func(_ context.Context, e *TransitionEvent[S, E, D]) {
-			// OnTransition fires under the actor lock, so a.active is
-			// already updated. We can't call States() here (it takes
-			// RLock, we hold the write lock). Record e.To instead.
-			mu.Lock()
-			results = append(results, []S{e.To})
-			if len(results) >= len(expected) {
-				select {
-				case <-done:
-				default:
-					close(done)
-				}
-			}
-			mu.Unlock()
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[S, E, D]) {
+			step <- struct{}{}
 		},
 	}
 
 	actor := Start(m, cacheCtx{}, m.WithObservers(obs))
 	for i := 0; i < len(expected); i++ {
 		actor.Send("GO")
+		<-step
+		results = append(results, actor.States())
 	}
-	<-done
 	actor.Stop()
 
 	for i, exp := range expected {
-		mu.Lock()
 		got := results[i]
-		mu.Unlock()
 		if len(got) != len(exp) || got[0] != exp[0] {
 			t.Errorf("transition %d: got %v, want %v", i, got, exp)
 		}
@@ -106,21 +92,15 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var transitions []stateSnap
-	done := make(chan struct{})
+	step := make(chan struct{})
 	const rounds = 6
 
 	obs := ObserverFuncs[S, E, D]{
 		TransitionFunc: func(_ context.Context, e *TransitionEvent[S, E, D]) {
 			mu.Lock()
 			transitions = append(transitions, stateSnap{from: e.From, to: e.To})
-			if len(transitions) >= rounds {
-				select {
-				case <-done:
-				default:
-					close(done)
-				}
-			}
 			mu.Unlock()
+			step <- struct{}{}
 		},
 	}
 
@@ -132,10 +112,27 @@ func TestSortedActiveCacheHierarchical(t *testing.T) {
 		t.Fatalf("initial states: got %v, want [left, left.child]", states)
 	}
 
+	expectedActive := [][]S{
+		{"right", "right.child"},
+		{"left", "left.child"},
+		{"right", "right.child"},
+		{"left", "left.child"},
+		{"right", "right.child"},
+		{"left", "left.child"},
+	}
+
 	for i := 0; i < rounds; i++ {
 		actor.Send("SWAP")
+		<-step
+		gotStates := actor.States()
+		wantStates := expectedActive[i]
+		if len(gotStates) != len(wantStates) || gotStates[0] != wantStates[0] || gotStates[1] != wantStates[1] {
+			t.Errorf("round %d States(): got %v, want %v", i, gotStates, wantStates)
+		}
+		if gotLeaf := actor.State(); gotLeaf != wantStates[1] {
+			t.Errorf("round %d State(): got %q, want %q", i, gotLeaf, wantStates[1])
+		}
 	}
-	<-done
 	actor.Stop()
 
 	// Verify alternating pattern.
@@ -371,3 +368,108 @@ func TestSortedActiveStatesDeterministicTieBreaker(t *testing.T) {
 	}
 }
 
+// TestSortedActiveColdConcurrentReads verifies that concurrent calls to State()
+// and States() on a freshly hydrated actor (before any read has populated the
+// cache) do not race.
+func TestSortedActiveColdConcurrentReads(t *testing.T) {
+	type S = string
+	type E = string
+	type D = cacheCtx
+
+	m := New[S, E, D]("cold").
+		Initial("a").
+		State("a", func(_ *StateBuilder[S, E, D]) {}).
+		Build()
+
+	a := Hydrate(m, Snapshot[S, D]{Active: []S{"a"}})
+	defer a.Stop()
+
+	gate := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-gate
+			if states := a.States(); len(states) != 1 || states[0] != "a" {
+				t.Errorf("States() = %v, want [a]", states)
+			}
+			if state := a.State(); state != "a" {
+				t.Errorf("State() = %q, want \"a\"", state)
+			}
+		}()
+	}
+	close(gate)
+	wg.Wait()
+}
+
+// TestSortedActiveConcurrentReadsDuringTransitions verifies that concurrent
+// readers calling State() and States() while transitions mutate the active set
+// never race or observe partially sorted slices.
+func TestSortedActiveConcurrentReadsDuringTransitions(t *testing.T) {
+	type S = string
+	type E = string
+	type D = cacheCtx
+
+	m := New[S, E, D]("concurrent-rw").
+		Initial("left").
+		State("left", func(s *StateBuilder[S, E, D]) {
+			s.Initial("left.child")
+			s.State("left.child", func(cs *StateBuilder[S, E, D]) {
+				cs.On("SWAP").GoTo("right")
+			})
+		}).
+		State("right", func(s *StateBuilder[S, E, D]) {
+			s.Initial("right.child")
+			s.State("right.child", func(cs *StateBuilder[S, E, D]) {
+				cs.On("SWAP").GoTo("left")
+			})
+		}).
+		Build()
+
+	const rounds = 50
+	done := make(chan struct{})
+	count := 0
+	obs := ObserverFuncs[S, E, D]{
+		TransitionFunc: func(_ context.Context, _ *TransitionEvent[S, E, D]) {
+			count++
+			if count == rounds {
+				close(done)
+			}
+		},
+	}
+
+	a := Start(m, cacheCtx{}, m.WithObservers(obs))
+	defer a.Stop()
+
+	stopReaders := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stopReaders:
+					return
+				default:
+					states := a.States()
+					if len(states) != 2 {
+						t.Errorf("unexpected states length: %v", states)
+					}
+					leaf := a.State()
+					if leaf != "left.child" && leaf != "right.child" {
+						t.Errorf("unexpected leaf state: %q", leaf)
+					}
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < rounds; i++ {
+		a.Send("SWAP")
+	}
+	<-done
+	close(stopReaders)
+	wg.Wait()
+}

@@ -43,13 +43,13 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// invokeGens maps active state IDs to their active entry generation token.
 	// This token ensures that a stale mutate closure spawned during a previous
 	// state entry cannot apply mutations after the state has exited or re-entered.
-	invokeGens  map[S]uint64
+	invokeGens map[S]uint64
 	// nextGen tracks the monotonic generation count for state entries.
-	nextGen     uint64
-	timers      map[S][]*time.Timer
-	mailbox     chan envelope[E]
-	mu          sync.RWMutex
-	stopOnce    sync.Once
+	nextGen  uint64
+	timers   map[S][]*time.Timer
+	mailbox  chan envelope[E]
+	mu       sync.RWMutex
+	stopOnce sync.Once
 	// stopped is closed exactly once by Stop to signal shutdown to the loop
 	// goroutine and to any caller parked in [Actor.SendCtx]'s select. Using a
 	// dedicated channel (rather than closing the mailbox) avoids the
@@ -73,8 +73,9 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	eventDroppedObs    []EventDroppedObserver[S, E, D]
 
 	// sortedActive caches the result of getSortedActiveStatesLocked.
-	// Nil means stale; rebuilt lazily on next call. Invalidated by
-	// enterSingleState and exitState.
+	// Maintained strictly under the actor's write lock (a.mu.Lock()):
+	// invalidated whenever a.active is mutated and rebuilt under the write lock
+	// so concurrent RLock readers in State() and States() never write to it.
 	sortedActive []S
 }
 
@@ -164,6 +165,7 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 
 	// Handle any transient transitions that fire immediately
 	a.handleAlwaysInternal(context.Background())
+	a.getSortedActiveStatesLocked()
 	a.mu.Unlock()
 
 	a.wg.Add(1)
@@ -237,6 +239,7 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 	for sID := range active {
 		a.restartServices(context.Background(), sID)
 	}
+	a.getSortedActiveStatesLocked()
 	a.mu.Unlock()
 
 	a.wg.Add(1)
@@ -349,7 +352,6 @@ func (a *Actor[S, E, D]) newEventNotice(event E, reason string) *EventNotice[S, 
 		Timestamp: time.Now(),
 	}
 }
-
 
 // isStateDoneLocked returns true if the subtree rooted at sID has reached
 // its completion state per SCXML semantics. Must be called with a.mu held
@@ -539,7 +541,7 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 				return
 			default:
 			}
-			// Reject mutations if the state has exited or if a new entry has 
+			// Reject mutations if the state has exited or if a new entry has
 			// superseded this invoke's generation (e.g. during A -> B -> A cycling).
 			if a.invokeGens[id] != gen {
 				return
@@ -633,8 +635,10 @@ func (a *Actor[S, E, D]) States() []S {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	// Get states sorted by depth (deepest first)
-	active := a.getSortedActiveStatesLocked()
+	active := a.sortedActive
+	if active == nil {
+		active = a.computeSortedActiveStates()
+	}
 
 	// Reverse to get root-to-leaf order
 	res := make([]S, len(active))
@@ -649,20 +653,31 @@ func (a *Actor[S, E, D]) States() []S {
 func (a *Actor[S, E, D]) State() S {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	active := a.getSortedActiveStatesLocked()
+	active := a.sortedActive
+	if active == nil {
+		active = a.computeSortedActiveStates()
+	}
 	if len(active) > 0 {
 		return active[0] // deepest leaf
 	}
 	return ""
 }
 
-// getSortedActiveStatesLocked retrieves active states sorted by depth (deepest first).
-// Must be called with at least a read lock.
+// getSortedActiveStatesLocked retrieves active states sorted by depth (deepest first)
+// and caches the result in a.sortedActive.
+// Must be called with the write lock (a.mu.Lock()) held.
 func (a *Actor[S, E, D]) getSortedActiveStatesLocked() []S {
 	if a.sortedActive != nil {
 		return a.sortedActive
 	}
+	res := a.computeSortedActiveStates()
+	a.sortedActive = res
+	return res
+}
 
+// computeSortedActiveStates computes the active states sorted by depth (deepest first)
+// without mutating a.sortedActive. Must be called with at least a read lock held.
+func (a *Actor[S, E, D]) computeSortedActiveStates() []S {
 	res := make([]S, 0, len(a.active))
 	for sID := range a.active {
 		res = append(res, sID)
@@ -692,7 +707,6 @@ func (a *Actor[S, E, D]) getSortedActiveStatesLocked() []S {
 		}
 		return 0
 	})
-	a.sortedActive = res
 	return res
 }
 
@@ -812,6 +826,7 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 				a.executeTransition(ctx, sID, t, event)
 				// Check for transient transitions after the event transition
 				a.handleAlwaysInternal(ctx)
+				a.getSortedActiveStatesLocked()
 				return
 			}
 		}
@@ -915,6 +930,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			}
 		}
 		delete(a.active, sID)
+		a.sortedActive = nil // invalidate cache
 		if len(a.stateExitedObs) > 0 {
 			e := a.newStateEvent(sID)
 			for _, o := range a.stateExitedObs {
@@ -1005,6 +1021,7 @@ func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID
 	var zero E
 	a.executeTransition(ctx, sourceID, t, zero)
 	a.handleAlwaysInternal(ctx)
+	a.getSortedActiveStatesLocked()
 }
 
 // enterChildrenWithHistory resolves the child states to enter, respecting history and parallel types.
@@ -1057,7 +1074,6 @@ func (a *Actor[S, E, D]) isDescendant(childID, parentID S) bool {
 	}
 	return false
 }
-
 
 // handleAlwaysInternal checks active states for Always transitions.
 // Must be called with a write lock.
