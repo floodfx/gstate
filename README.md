@@ -65,16 +65,16 @@ machine := gstate.New[MyState, MyEvent, MyData]("toggle").
 
 ## 2. Type Safety & Generics
 
-One of the core strengths of `gstate` is its use of Go 1.18+ generics to provide strict type safety.
+One of the core strengths of `gstate` is its use of Go generics to provide strict type safety.
 
 The library uses three generic parameters: `[S ~string, E ~string, D Cloner[D]]`.
 
 - **`S` (State ID)**: By using a custom string type (e.g., `type MyState string`), you ensure that `Initial()`, `State()`, and `GoTo()` only accept valid state identifiers.
 - **`E` (Event ID)**: Similarly, `On(event)` only accepts events of your specific type.
-- **`D` (Data)**: The data your machine holds is strictly typed, and MUST satisfy the `gstate.Cloner[D]` constraint. Actions and guards receive this exact type, eliminating the need for dynamic casting and guaranteeing thread-safe reads/writes during actor execution.
+- **`D` (Data)**: The data your machine holds is strictly typed, and MUST satisfy the `gstate.Cloner[D]` constraint. Actions and guards receive this exact type, eliminating dynamic casts. The actor serializes actions and guards; data isolation also requires a correct deep `Clone()` and respecting ownership.
 
 **Benefits:**
-- **No Typos**: Compilers will catch `actor.Send("TYPO")` if your event type is strictly defined.
+- **Distinct ID types**: Named string types prevent mixing typed state and event variables. Untyped string constants such as `actor.Send("TYPO")` still compile; use declared constants and handle dropped events.
 - **IDE Support**: Autocomplete works for states, events, and data fields.
 - **Safety**: Guards and Actions are verified at compile time to work with your specific data structure.
 
@@ -102,7 +102,7 @@ s.On("INCREMENT").
 
 To guarantee thread-safe read/write isolation when snapshotting or observing a running Actor, the Data type `D` must satisfy the `Cloner[D]` constraint.
 
-If your Data consists solely of value types (like `struct{ Count int }`), implementing `Clone()` is as simple as returning `c`:
+If your Data consists solely of value types (like `struct{ Count int }`), implementing `Clone()` is as simple as returning `d`:
 
 ```go
 func (d MyData) Clone() MyData {
@@ -118,8 +118,8 @@ type MyData struct {
 }
 
 func (d MyData) Clone() MyData {
-    newData := make([]int, len(c.Data))
-    copy(newData, c.Data)
+    newData := make([]int, len(d.Data))
+    copy(newData, d.Data)
     return MyData{Data: newData}
 }
 ```
@@ -346,18 +346,24 @@ If a machine definition violates any structural rules, `Build()` will fail-fast 
 3. **Invoke Targets**:
    - The `onDone` and `onError` targets specified in `s.Invoke(handler, onDone, onError)` must point to valid, declared states.
 
+State IDs must be nonempty and globally unique. Machine initials must be top-level states; compound initials must be direct children. Atomic and Final states cannot have children, and Final states cannot declare outgoing transitions or services. Compound and Parallel states need children. Hierarchy validation runs before metadata traversal.
+
+Transitions between sibling parallel regions are rejected for event, Always, timer, and invoke triggers. Entering a nested parallel target from outside initializes every sibling region. Targeted transitions are external: ancestor and self transitions run the appropriate exit and entry actions. A transition contained in one parallel region preserves the other regions. Targetless transitions execute their action without exit or entry.
+
+For an event, enabled transitions are selected before any actions run. Deeper states win ancestor conflicts; equal-depth conflicts use ascending state ID order. Compatible regions all execute before Always processing begins. An event is dropped only if no region handles it.
+
 ### Example Validation Failures
 
 ```go
-// Panics: "gstate: initial state 'invalid_state' not found in machine"
-machine := gstate.New[MyState, MyEvent, any]("invalid_initial").
+// Panics: a gstate: error for an undeclared initial state.
+_ = gstate.New[MyState, MyEvent, MyData]("invalid_initial").
     Initial("invalid_state").
     Build()
 
-// Panics: "gstate: transition target 'typo_state' in state 'idle' not found in machine"
-machine := gstate.New[MyState, MyEvent, any]("invalid_target").
+// Independently, this panics with a gstate: error for an undeclared target.
+_ = gstate.New[MyState, MyEvent, MyData]("invalid_target").
     Initial("idle").
-    State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, any]) {
+    State("idle", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
         s.On("START").GoTo("typo_state")
     }).
     Build()
@@ -394,7 +400,7 @@ actor := gstate.Start(machine, MyData{}, machine.WithObservers(rec))
 
 ### Threading and locking contract
 
-- All callbacks except `OnInvokeCompleted` run **synchronously on the actor's event-processing goroutine** while it holds the actor's internal write lock. This includes `OnInvokeStarted`, which fires when an invoked service is launched during state entry. Implementations must be non-blocking.
+- All callbacks except `OnInvokeCompleted` run synchronously under the actor's write lock, on the goroutine handling startup, a mailbox event, a timer, or an invoke transition. This includes `OnInvokeStarted`, which fires when an invoked service is launched during state entry. Implementations must be non-blocking.
 - Observers **must not** call methods on the same `Actor` that would re-enter the actor lock (e.g. `Snapshot()`, `State()`).
 - Observers **must not** call `Send` / `SendCtx` synchronously: the channel send can block on a full mailbox, and the loop goroutine that would drain it cannot acquire the actor lock the observer is holding — a hard deadlock. If you need to dispatch an event from an observer, do it from a fresh goroutine:
   ```go
@@ -430,7 +436,7 @@ ready := make(chan struct{}, 1)
 obs := gstate.SignalObserver[MyState, MyEvent, MyData](func() {
     select { case ready <- struct{}{}: default: }
 })
-actor := gstate.Start(machine, ctx, machine.WithObservers(obs))
+actor := gstate.Start(machine, MyData{}, machine.WithObservers(obs))
 actor.Send(EventGo)
 <-ready // deterministically woken by the first lifecycle callback
 ```
@@ -448,7 +454,7 @@ obs := gstate.ObserverFuncs[MyState, MyEvent, MyData]{
         log.Printf("[%s] %s --%s--> %s", e.ActorID, e.From, e.Event, e.To)
     },
 }
-actor := gstate.Start(machine, ctx, machine.WithObservers(obs))
+actor := gstate.Start(machine, MyData{}, machine.WithObservers(obs))
 ```
 
 `ObserverFuncs` is a struct of optional function fields plus a generic `AnyFunc`. Each callback dispatches to `AnyFunc` first (if set), then to the kind-specific field (if set). Nil fields are no-ops. Useful when you want a partial observer without defining a named type, or when one hook should fire for every event in addition to specific typed handlers.
@@ -592,7 +598,7 @@ actor.Stop()
 
 | Work item | Why it's guaranteed |
 |---|---|
-| Entry, exit, and transition actions, and guard evaluations, for any event the actor had already begun processing | Synchronous on the loop goroutine. `Stop` acquires the actor's write lock before signalling shutdown; `handleEvent` holds that lock while running actions, so `Stop` waits for the in-flight transition to fully complete before proceeding. |
+| Entry, exit, and transition actions, and guard evaluations, for any event the actor had already begun processing | Serialized under the actor lock for mailbox, timer, and invoke transitions. `Stop` acquires the actor's write lock before signalling shutdown; `handleEvent` holds that lock while running actions, so `Stop` waits for the in-flight transition to fully complete before proceeding. |
 | `Invoke` `Func` goroutines | Cancelled via their `context.CancelFunc`. A `sync.WaitGroup` tracks every spawned invoke goroutine and `Stop` waits on it before returning. |
 | `OnInvokeCompleted` observer callbacks for each in-flight or cancelled invoke | Fired from inside the invoke goroutine immediately before its `defer wg.Done()`, so they're covered by the wait. |
 | `OnStateExited` / `OnStateEntered` callbacks fired during the in-flight transition | Run synchronously inside `handleEvent` under the write lock — same guarantee as actions. |
@@ -604,6 +610,8 @@ actor.Stop()
 | Events buffered in the mailbox that the actor had not yet pulled | Abandoned. Once `Stop` has signalled shutdown, the loop exits without consuming further events. Model must-run-before-shutdown work as an `Invoke` (see Tip below). |
 | Goroutines you spawned yourself from inside an action, guard, or invoke (e.g. `go publishMetric(c)` inside an `Assign`) | The actor has no handle on them. If the work must finish before `Stop` returns, do it inside an `Invoke` `Func` whose return is awaited, not in a fire-and-forget goroutine. |
 | `time.AfterFunc` callbacks for delayed transitions that were already firing when `Stop` ran | They no-op via the actor's inactive-state check in `executeInternalTransition`, but they run on Go's internal timer pool and aren't tracked. The side effect is harmless. |
+
+Do not call `Stop()` synchronously from actor callbacks, actions, guards, or an invocation function. Lock-held callbacks would re-enter the actor lock; invokes and `OnInvokeCompleted` would wait for their own goroutine. Schedule `go actor.Stop()` when shutdown must originate there.
 
 **Send after Stop is a no-op.** `Send` swallows any error and returns; `SendCtx` returns `gstate.ErrActorStopped` so callers can detect that the event was not delivered. Neither will panic.
 
@@ -651,6 +659,10 @@ A `Snapshot` contains:
 - **`ActorID ActorID`** — the producing actor's stable identifier
 
 `Hydrate` restores the actor state and restarts any background services (invocations and timers) for active states, without re-executing entry actions. The hydrated actor keeps the original `ActorID` from the snapshot.
+
+Snapshots contain logical configuration, history, cloned data, and actor identity. They do not preserve queued events, elapsed timer time, or external invocation progress. Hydration clones data and history, restores missing ancestors and parallel regions, and restarts services in deterministic root-to-leaf order. Unknown active IDs are ignored. Conflicting children or top-level states use the alphabetically first requested state; empty configurations fall back to the machine initial. Missing compound children use valid history or their initial state. Entry actions are skipped.
+
+`Start` takes ownership of reference-containing initial data. Pass `initialData.Clone()` if you retain a mutable reference. A built machine and all its maps, definitions, callbacks, and retained builder references must remain unchanged while actors or exporters use it. Immutability is a caller contract, not enforced by Go's exported fields.
 
 `Hydrate` does **not** fire `OnStateEntered` or `OnTransition` for the states being restored — those events represent the original state changes that were already observed before the snapshot was captured. Hooks resume firing on the next event, Always evaluation, or invoke completion processed by the hydrated actor.
 

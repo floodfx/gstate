@@ -6,31 +6,31 @@ This example models an autonomous agent that investigates a problem (asynchronou
 
 ```mermaid
 ---
-title: Agent Workflow
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state "approving" as approving
-    state "done" as done
-    state "fixing" as fixing
-    state "investigating" as investigating
-    state "verifying" as verifying
-	done --> [*]
-	[*] --> investigating
-	approving --> fixing: YES
-	approving --> done: NO
-	fixing --> verifying: SUCCESS
-	fixing --> investigating: RETRY
-	fixing --> done: [maxAttempts]
-	investigating --> approving: done.invoke
-	investigating --> done: error
-	verifying --> fixing: FAIL [canRetry]
-	verifying --> done: FAIL
-	verifying --> done: PASS
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> investigating
+    approving(["approving"])
+    done((("done")))
+    fixing(["fixing"])
+    investigating(["investigating"])
+    verifying(["verifying"])
+    approving -->|"YES"| fixing
+    approving -->|"NO"| done
+    fixing -->|"SUCCESS"| verifying
+    fixing -->|"RETRY / action"| investigating
+    fixing -->|"always [guard] / action"| done
+    __gstate_invoke_696e7665737469676174696e67{"__gstate_invoke_696e7665737469676174696e67"}
+    investigating --> __gstate_invoke_696e7665737469676174696e67
+    __gstate_invoke_696e7665737469676174696e67 -->|"invoke.done"| approving
+    __gstate_invoke_696e7665737469676174696e67 -->|"invoke.error"| done
+    verifying -->|"FAIL [guard] / action"| fixing
+    verifying -->|"FAIL"| done
+    verifying -->|"PASS"| done
 ```
 
 
@@ -45,12 +45,18 @@ stateDiagram-v2
     <transition event="NO" target="done"></transition>
   </state>
   <final id="done">
-    <onentry></onentry>
+    <onentry>
+      <log label="entry action"></log>
+    </onentry>
   </final>
   <state id="fixing">
     <transition event="SUCCESS" target="verifying"></transition>
-    <transition event="RETRY" target="investigating"></transition>
-    <transition cond="maxAttempts" target="done"></transition>
+    <transition event="RETRY" target="investigating">
+      <assign></assign>
+    </transition>
+    <transition cond="guard" target="done">
+      <assign></assign>
+    </transition>
   </state>
   <state id="investigating">
     <transition event="done.invoke.investigating" target="approving"></transition>
@@ -58,7 +64,9 @@ stateDiagram-v2
     <invoke id="investigating"></invoke>
   </state>
   <state id="verifying">
-    <transition event="FAIL" cond="canRetry" target="fixing"></transition>
+    <transition event="FAIL" cond="guard" target="fixing">
+      <assign></assign>
+    </transition>
     <transition event="FAIL" target="done"></transition>
     <transition event="PASS" target="done"></transition>
   </state>

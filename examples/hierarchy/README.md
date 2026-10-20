@@ -6,28 +6,24 @@ This example demonstrates nested (compound) states, where a **parent** state con
 
 ```mermaid
 ---
-title: Hierarchy
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state "done" as done
-    state parent {
-        [*] --> child1
-        state "child1" as child1
-        note left of child1: entry / action<br/>exit / action
-        state "child2" as child2
-        note left of child2: entry / action<br/>exit / action
-    }
-    note left of parent: entry / action<br/>exit / action
-	done --> [*]
-	[*] --> parent
-	parent --> done: EXIT_ALL
-	child1 --> child2: TO_CHILD2
-	child2 --> child1: TO_CHILD1
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> parent
+    done((("done")))
+    subgraph parent ["parent<br/>entry / action<br/>exit / action"]
+        __gstate_initial_706172656e74(("●"))
+        __gstate_initial_706172656e74 --> child1
+        child1(["child1<br/>entry / action<br/>exit / action"])
+        child2(["child2<br/>entry / action<br/>exit / action"])
+    end
+    parent -->|"EXIT_ALL"| done
+    child1 -->|"TO_CHILD2"| child2
+    child2 -->|"TO_CHILD1"| child1
 ```
 
 
@@ -39,17 +35,29 @@ stateDiagram-v2
 <scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="hierarchy" initial="parent">
   <final id="done"></final>
   <state id="parent" initial="child1">
-    <onentry></onentry>
-    <onexit></onexit>
+    <onentry>
+      <log label="entry action"></log>
+    </onentry>
+    <onexit>
+      <log label="exit action"></log>
+    </onexit>
     <transition event="EXIT_ALL" target="done"></transition>
     <state id="child1">
-      <onentry></onentry>
-      <onexit></onexit>
+      <onentry>
+        <log label="entry action"></log>
+      </onentry>
+      <onexit>
+        <log label="exit action"></log>
+      </onexit>
       <transition event="TO_CHILD2" target="child2"></transition>
     </state>
     <state id="child2">
-      <onentry></onentry>
-      <onexit></onexit>
+      <onentry>
+        <log label="entry action"></log>
+      </onentry>
+      <onexit>
+        <log label="exit action"></log>
+      </onexit>
       <transition event="TO_CHILD1" target="child1"></transition>
     </state>
   </state>

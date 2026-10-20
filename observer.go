@@ -24,10 +24,10 @@ import (
 //
 // Threading and locking contract:
 //
-//   - All callbacks except OnInvokeCompleted run synchronously on the actor's
-//     event-processing goroutine while it holds the actor's internal write
-//     lock. This includes OnInvokeStarted, which fires from
-//     enterSingleState's service-restart path. Implementations must be
+//   - All callbacks except OnInvokeCompleted run synchronously under the
+//     actor's internal write lock, on the goroutine handling the trigger:
+//     startup caller, mailbox loop, timer callback, or invoke transition.
+//     This includes OnInvokeStarted during entry. Implementations must be
 //     non-blocking.
 //   - Implementations must not call methods on the same [Actor] that would
 //     require re-entering the actor lock (e.g. [Actor.Snapshot],
@@ -361,7 +361,7 @@ func (e EventNotice[S, E, D]) String() string {
 //	obs := gstate.SignalObserver[MyState, MyEvent, MyData](func() {
 //	    select { case ready <- struct{}{}: default: }
 //	})
-//	actor := gstate.Start(machine, ctx, machine.WithObservers(obs))
+//	actor := gstate.Start(machine, initialData, machine.WithObservers(obs))
 //	actor.Send(EventGo)
 //	<-ready
 func SignalObserver[S ~string, E ~string, D Cloner[D]](signal func()) Observer[S, E, D] {
@@ -417,7 +417,7 @@ func (o signalObserver[S, E, D]) OnEventDropped(context.Context, *EventNotice[S,
 //	    AnyFunc:        func(ctx context.Context) { /* ... */ },
 //	    TransitionFunc: func(ctx context.Context, e *gstate.TransitionEvent[MyState, MyEvent, MyData]) { /* ... */ },
 //	}
-//	actor := gstate.Start(machine, ctx, machine.WithObservers(obs))
+//	actor := gstate.Start(machine, initialData, machine.WithObservers(obs))
 //
 // ObserverFuncs values are passed by value; the implementation uses
 // value receivers. Do not mutate fields after installing on an actor.

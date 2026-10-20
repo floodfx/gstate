@@ -10,10 +10,10 @@
 default:
     @just --list
 
-# Install dev tools (latest) into $GOBIN (defaults to ~/go/bin).
+# Install pinned dev tools into $GOBIN (defaults to ~/go/bin).
 install-tools:
-    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-    go install golang.org/x/vuln/cmd/govulncheck@latest
+    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+    go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
 # Run all lint checks. CI gate.
 lint:
@@ -96,3 +96,11 @@ mermaid-verify:
 
 # Everything CI runs end-to-end, in order.
 ci: build lint vuln test test-race bench-ci fuzz-smoke
+
+# Regenerate example README diagrams from compiled machine declarations (Python 3).
+examples-diagrams:
+    python3 scripts/update-example-diagrams.py
+
+# Check example README diagrams for drift without rewriting them (Python 3).
+examples-verify:
+    python3 scripts/update-example-diagrams.py --check

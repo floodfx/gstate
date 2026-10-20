@@ -12,7 +12,7 @@ type MyState string
 type MyEvent string
 
 // 2. Define constants for our states and events.
-// This ensures type safety and prevents typos throughout the application.
+// Named types distinguish state and event variables; constants avoid raw string IDs.
 const (
 	StateIdle   MyState = "idle"
 	StateActive MyState = "active"

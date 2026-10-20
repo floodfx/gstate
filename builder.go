@@ -43,7 +43,8 @@ func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *
 	return m
 }
 
-// Build finalizes the machine definition and returns an immutable Machine instance.
+// Build validates and finalizes the machine. Treat it and all retained builder
+// references as read-only afterward; see Machine for the ownership contract.
 // It performs a static-analysis validation pass and panics if any invalid state,
 // transition target, or invoke target is detected.
 func (m *MachineBuilder[S, E, D]) Build() *Machine[S, E, D] {
