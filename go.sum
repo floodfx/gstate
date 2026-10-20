@@ -4,8 +4,8 @@ github.com/jaevor/go-nanoid v1.4.0 h1:mPz0oi3CrQyEtRxeRq927HHtZCJAAtZ7zdy7vOkrvW
 github.com/jaevor/go-nanoid v1.4.0/go.mod h1:GIpPtsvl3eSBsjjIEFQdzzgpi50+Bo1Luk+aYlbJzlc=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/sammcj/mermaid-check v0.2.0 h1:aUeF+LPvjJEcJG1HQrGAY1C29qDP74K40mgyoDH0RCQ=
-github.com/sammcj/mermaid-check v0.2.0/go.mod h1:zdYcoYCdyd+MTkkSOPDzEZkvhkn28OMH/KcGsFjmePQ=
+github.com/sammcj/mermaid-check v0.5.1 h1:mRavMryPdcYu2NqdE2Wi1Wo6WFBT109bG/j+Yaf8YKg=
+github.com/sammcj/mermaid-check v0.5.1/go.mod h1:zdYcoYCdyd+MTkkSOPDzEZkvhkn28OMH/KcGsFjmePQ=
 github.com/stretchr/testify v1.8.0 h1:pSgiaMZlXftHpm5L7V1+rVB+AZJydKsMxsQBIJw4PKk=
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
