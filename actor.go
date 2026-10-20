@@ -658,7 +658,14 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 			if a.invokeGens[id] != gen {
 				return
 			}
-			a.data = fn(a.data)
+			// Treat a committed invoke update as an eventless targetless action.
+			// Reuse transition notifications and settle before mutate returns.
+			ctx := context.WithoutCancel(invokeCtx)
+			var zero E
+			a.executeTransition(ctx, id, &TransitionDef[S, E, D]{Action: fn}, zero)
+			a.handleAlwaysInternal(ctx)
+			a.getSortedActiveStatesLocked()
+			a.checkAndInitiateAutoStopLocked()
 		}
 
 		if len(a.invokeStartedObs) > 0 {

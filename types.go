@@ -124,7 +124,13 @@ type InvokeDef[S ~string, E ~string, D Cloner[D]] struct {
 	//   Reads are lock-free and never race because the invoke goroutine owns this value.
 	// - mutate: applies updates to the live actor data under the actor's write lock.
 	//   The result of the mutation function replaces the live data. mutate is synchronous
-	//   and returns after the write commits. It no-ops after invocation completion, state exit, or actor shutdown.
+	//   and returns after the write, observer notifications, and Always settling.
+	//   A committed update emits OnActionExecuted followed by OnTransition, with
+	//   this invoke's state as source and zero event/target values, before Always
+	//   notifications. No mailbox event is emitted. Callbacks run under the actor
+	//   lock on the caller's goroutine and inherit invoke context values without
+	//   cancellation. mutate must not be called from a lock-held actor callback.
+	//   It no-ops after invocation completion, state exit, or actor shutdown.
 	//
 	// Func must not synchronously call Stop on its actor; Stop waits for Func
 	// to return. Schedule Stop from another goroutine when needed.
