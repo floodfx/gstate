@@ -602,7 +602,7 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 				target = invoke.OnError
 			}
 			if target != "" {
-				a.executeInternalTransition(context.WithoutCancel(invokeCtx), sID, target)
+				a.executeInternalTransition(context.WithoutCancel(invokeCtx), sID, &TransitionDef[S, E, D]{Target: target})
 			}
 		}(id, stateDef.Invoke, snap, mutate)
 	}
@@ -611,7 +611,7 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 	for _, t := range stateDef.Delayed {
 		trans := t // capture for closure
 		timer := time.AfterFunc(t.After, func() {
-			a.executeInternalTransition(context.Background(), id, trans.Target)
+			a.executeInternalTransition(context.Background(), id, trans)
 		})
 		a.timers[id] = append(a.timers[id], timer)
 	}
@@ -1027,17 +1027,29 @@ func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 }
 
 // executeInternalTransition handles transitions triggered by services (invokes/timers).
-func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID S, targetID S) {
+func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID S, t *TransitionDef[S, E, D]) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	// Verify the source state is still active before transitioning
-	if !a.active[sourceID] {
+	if !a.active[sourceID] || t == nil {
 		return
 	}
 
-	t := &TransitionDef[S, E, D]{Target: targetID}
 	var zero E
+	if t.Guard != nil {
+		ok := t.Guard(a.data)
+		if len(a.guardObs) > 0 {
+			e := a.newGuardEvent(sourceID, zero, t.Target, ok)
+			for _, o := range a.guardObs {
+				o.OnGuardEvaluated(ctx, e)
+			}
+		}
+		if !ok {
+			return
+		}
+	}
+
 	a.executeTransition(ctx, sourceID, t, zero)
 	a.handleAlwaysInternal(ctx)
 	a.getSortedActiveStatesLocked()
