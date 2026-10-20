@@ -2,10 +2,15 @@ package gstate
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
+
+// validationMessage preserves the string panic values historically used for
+// structural validation while also exposing them through the error API.
+type validationMessage string
+
+func (message validationMessage) Error() string { return string(message) }
 
 // MachineBuilder provides a fluent API for declaring statechart definitions.
 type MachineBuilder[S ~string, E ~string, D Cloner[D]] struct {
@@ -51,6 +56,9 @@ func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *
 func (m *MachineBuilder[S, E, D]) Build() *Machine[S, E, D] {
 	machine, err := m.BuildWithError()
 	if err != nil {
+		if message, ok := err.(validationMessage); ok {
+			panic(string(message))
+		}
 		panic(err)
 	}
 	return machine
@@ -97,22 +105,22 @@ func (m *MachineBuilder[S, E, D]) reserveState(id S, state *StateDef[S, E, D]) {
 func (m *MachineBuilder[S, E, D]) validateStructure() error {
 	initial := m.machine.States[m.machine.Initial]
 	if m.machine.Initial == "" {
-		return errors.New("gstate: machine initial state is required")
+		return validationMessage("gstate: machine initial state is required")
 	}
 	if initial != nil && initial.parent != "" {
-		return errors.New("gstate: machine initial must be top-level")
+		return validationMessage("gstate: machine initial must be top-level")
 	}
 	visited := make(map[S]bool)
 	var visit func(S) error
 	visit = func(id S) error {
 		sd := m.machine.States[id]
 		if sd == nil || visited[id] {
-			return errors.New("gstate: invalid hierarchy or cycle")
+			return validationMessage("gstate: invalid hierarchy or cycle")
 		}
 		visited[id] = true
 		for child, def := range sd.States {
 			if def == nil || def.parent != id || m.machine.States[child] != def {
-				return errors.New("gstate: invalid child hierarchy")
+				return validationMessage("gstate: invalid child hierarchy")
 			}
 			if err := visit(child); err != nil {
 				return err
@@ -122,31 +130,31 @@ func (m *MachineBuilder[S, E, D]) validateStructure() error {
 	}
 	for id, sd := range m.machine.States {
 		if sd == nil || sd.ID != id || id == "" {
-			return errors.New("gstate: invalid state definition")
+			return validationMessage("gstate: invalid state definition")
 		}
 		switch sd.Type {
 		case Atomic, Final:
 			if len(sd.States) > 0 || sd.Initial != "" {
-				return errors.New("gstate: atomic/final state cannot have children or initial")
+				return validationMessage("gstate: atomic/final state cannot have children or initial")
 			}
 			if sd.Type == Final && (len(sd.Transitions) > 0 || len(sd.Always) > 0 || len(sd.Delayed) > 0 || sd.Invoke != nil) {
-				return errors.New("gstate: final state cannot have outgoing transitions or services")
+				return validationMessage("gstate: final state cannot have outgoing transitions or services")
 			}
 		case Compound, Parallel:
 			if len(sd.States) == 0 {
-				return errors.New("gstate: compound/parallel state requires children")
+				return validationMessage("gstate: compound/parallel state requires children")
 			}
 			if sd.Type == Compound && sd.Initial == "" {
-				return errors.New("gstate: compound initial state is required")
+				return validationMessage("gstate: compound initial state is required")
 			}
 			if sd.Type == Parallel && sd.Initial != "" {
-				return errors.New("gstate: parallel state cannot specify an initial child")
+				return validationMessage("gstate: parallel state cannot specify an initial child")
 			}
 		default:
-			return errors.New("gstate: invalid state kind")
+			return validationMessage("gstate: invalid state kind")
 		}
 		if sd.History < None || sd.History > Deep || (sd.History != None && sd.Type != Compound && sd.Type != Parallel) {
-			return errors.New("gstate: invalid history kind")
+			return validationMessage("gstate: invalid history kind")
 		}
 	}
 	for id, sd := range m.machine.States {
@@ -157,7 +165,7 @@ func (m *MachineBuilder[S, E, D]) validateStructure() error {
 		}
 	}
 	if len(visited) != len(m.machine.States) {
-		return errors.New("gstate: disconnected or cyclic hierarchy")
+		return validationMessage("gstate: disconnected or cyclic hierarchy")
 	}
 	return nil
 }
