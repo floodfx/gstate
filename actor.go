@@ -752,6 +752,15 @@ func (a *Actor[S, E, D]) enterState(ctx context.Context, id S) {
 	a.enterChildrenWithHistory(ctx, id, false)
 }
 
+// Matches reports whether state is active, including compound parents and
+// parallel regions. It reads the active set under the actor lock without
+// allocating a States slice. After shutdown it reads the final configuration.
+func (a *Actor[S, E, D]) Matches(state S) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.active[state]
+}
+
 // States returns the current list of all active states, ordered from root to leaf.
 func (a *Actor[S, E, D]) States() []S {
 	a.mu.RLock()
