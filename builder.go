@@ -38,8 +38,8 @@ func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *
 			Transitions: make(map[E][]*TransitionDef[S, E, D]),
 		},
 	}
+	m.reserveState(id, s.state)
 	fn(s)
-	m.machine.States[id] = s.state
 	return m
 }
 
@@ -47,6 +47,8 @@ func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *
 // It performs a static-analysis validation pass and panics if any invalid state,
 // transition target, or invoke target is detected.
 func (m *MachineBuilder[S, E, D]) Build() *Machine[S, E, D] {
+	m.validate()
+
 	// Pre-compute metadata for all states
 	for id, state := range m.machine.States {
 		if state.parent == "" {
@@ -54,12 +56,117 @@ func (m *MachineBuilder[S, E, D]) Build() *Machine[S, E, D] {
 		}
 	}
 
-	m.validate()
+	m.validateRegions()
 
 	return m.machine
 }
 
+func (m *MachineBuilder[S, E, D]) reserveState(id S, state *StateDef[S, E, D]) {
+	if id == "" {
+		panic("gstate: state ID must not be empty")
+	}
+	if _, exists := m.machine.States[id]; exists {
+		panic(fmt.Errorf("gstate: duplicate state ID %q", id))
+	}
+	m.machine.States[id] = state
+}
+
+// Validate the tree before any recursive metadata traversal.
+func (m *MachineBuilder[S, E, D]) validateStructure() {
+	initial := m.machine.States[m.machine.Initial]
+	if m.machine.Initial == "" {
+		panic("gstate: machine initial state is required")
+	}
+	if initial != nil && initial.parent != "" {
+		panic("gstate: machine initial must be top-level")
+	}
+	visited := make(map[S]bool)
+	var visit func(S)
+	visit = func(id S) {
+		sd := m.machine.States[id]
+		if sd == nil || visited[id] {
+			panic("gstate: invalid hierarchy or cycle")
+		}
+		visited[id] = true
+		for child, def := range sd.States {
+			if def == nil || def.parent != id || m.machine.States[child] != def {
+				panic("gstate: invalid child hierarchy")
+			}
+			visit(child)
+		}
+	}
+	for id, sd := range m.machine.States {
+		if sd == nil || sd.ID != id || id == "" {
+			panic("gstate: invalid state definition")
+		}
+		switch sd.Type {
+		case Atomic, Final:
+			if len(sd.States) > 0 || sd.Initial != "" {
+				panic("gstate: atomic/final state cannot have children or initial")
+			}
+			if sd.Type == Final && (len(sd.Transitions) > 0 || len(sd.Always) > 0 || len(sd.Delayed) > 0 || sd.Invoke != nil) {
+				panic("gstate: final state cannot have outgoing transitions or services")
+			}
+		case Compound, Parallel:
+			if len(sd.States) == 0 {
+				panic("gstate: compound/parallel state requires children")
+			}
+			if sd.Type == Compound && sd.Initial == "" {
+				panic("gstate: compound initial state is required")
+			}
+			if sd.Type == Parallel && sd.Initial != "" {
+				panic("gstate: parallel state cannot specify an initial child")
+			}
+		default:
+			panic("gstate: invalid state kind")
+		}
+		if sd.History < None || sd.History > Deep || (sd.History != None && sd.Type != Compound && sd.Type != Parallel) {
+			panic("gstate: invalid history kind")
+		}
+	}
+	for id, sd := range m.machine.States {
+		if sd.parent == "" {
+			visit(id)
+		}
+	}
+	if len(visited) != len(m.machine.States) {
+		panic("gstate: disconnected or cyclic hierarchy")
+	}
+}
+
+func (m *MachineBuilder[S, E, D]) validateRegions() {
+	for id, sd := range m.machine.States {
+		targets := []S{}
+		for _, ts := range sd.Transitions {
+			for _, t := range ts {
+				targets = append(targets, t.Target)
+			}
+		}
+		for _, t := range sd.Always {
+			targets = append(targets, t.Target)
+		}
+		for _, t := range sd.Delayed {
+			targets = append(targets, t.Target)
+		}
+		if sd.Invoke != nil {
+			targets = append(targets, sd.Invoke.OnDone, sd.Invoke.OnError)
+		}
+		for _, target := range targets {
+			if target == "" {
+				continue
+			}
+			tp := m.machine.States[target].path
+			for i, ancestor := range sd.path {
+				if i+1 < len(sd.path) && i+1 < len(tp) && tp[i] == ancestor && m.machine.States[ancestor].Type == Parallel && sd.path[i+1] != tp[i+1] {
+					panic(fmt.Errorf("gstate: cross-region transition from %q to %q is unsupported", id, target))
+				}
+			}
+		}
+	}
+}
+
 func (m *MachineBuilder[S, E, D]) validate() {
+	m.validateStructure()
 	if m.machine.Initial != "" {
 		if _, ok := m.machine.States[m.machine.Initial]; !ok {
 			panic(fmt.Errorf("gstate: machine %q has invalid initial state: %q does not exist", m.machine.ID, m.machine.Initial))
@@ -139,8 +246,9 @@ func (m *MachineBuilder[S, E, D]) computeMetadata(id S, depth int, path []S) {
 
 // StateBuilder provides methods for configuring a specific state's properties and children.
 type StateBuilder[S ~string, E ~string, D Cloner[D]] struct {
-	machine *Machine[S, E, D]
-	state   *StateDef[S, E, D]
+	machine      *Machine[S, E, D]
+	state        *StateDef[S, E, D]
+	explicitType bool
 }
 
 // State defines a nested child state.
@@ -154,11 +262,12 @@ func (s *StateBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) {
 			Transitions: make(map[E][]*TransitionDef[S, E, D]),
 		},
 	}
+	mb := MachineBuilder[S, E, D]{machine: s.machine}
+	mb.reserveState(id, child.state)
 	fn(child)
 	s.state.States[id] = child.state
-	s.machine.States[id] = child.state
 	// If a state has children, default its type to Compound unless explicitly set.
-	if s.state.Type == Atomic {
+	if s.state.Type == Atomic && !s.explicitType {
 		s.state.Type = Compound
 	}
 }
@@ -171,6 +280,7 @@ func (s *StateBuilder[S, E, D]) Initial(id S) {
 // Type explicitly sets the StateType (e.g., Parallel or Final).
 func (s *StateBuilder[S, E, D]) Type(t StateType) {
 	s.state.Type = t
+	s.explicitType = true
 }
 
 // Entry adds a function to be executed when this state is entered.
@@ -198,10 +308,10 @@ func (s *StateBuilder[S, E, D]) ExitLabel(name string) {
 // Invoke configures an asynchronous service to run during the state's lifecycle.
 //
 // Parameters:
-// - fn: service function receiving ctx, entry snapshot, and mutate callback.
-//   For details on the parameter contracts, see the documentation for InvokeDef.Func.
-// - onDone: state to transition to on success (when fn returns nil).
-// - onError: state to transition to on failure (when fn returns a non-nil error).
+//   - fn: service function receiving ctx, entry snapshot, and mutate callback.
+//     For details on the parameter contracts, see the documentation for InvokeDef.Func.
+//   - onDone: state to transition to on success (when fn returns nil).
+//   - onError: state to transition to on failure (when fn returns a non-nil error).
 func (s *StateBuilder[S, E, D]) Invoke(fn func(ctx context.Context, snap D, mutate func(func(D) D)) error, onDone S, onError S) {
 	s.state.Invoke = &InvokeDef[S, E, D]{
 		Func:    fn,

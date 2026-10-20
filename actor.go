@@ -232,8 +232,48 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 	// map and never mutates or races on the caller's snapshot.
 	history := make(map[S]S, len(snapshot.History))
 	for k, v := range snapshot.History {
-		history[k] = v
+		if parent := m.States[k]; parent != nil && parent.States[v] != nil {
+			history[k] = v
+		}
 	}
+
+	// Resolve ambiguous or incomplete snapshots into one valid configuration.
+	requested := active
+	active = make(map[S]bool)
+	var restore func(S, bool)
+	restore = func(id S, deep bool) {
+		sd := m.States[id]
+		active[id] = true
+		children := sortedStateIDs(sd.States)
+		if sd.Type == Parallel {
+			for _, child := range children {
+				restore(child, deep)
+			}
+			return
+		}
+		if sd.Type != Compound {
+			return
+		}
+		child := sd.Initial
+		if (deep || sd.History != None) && history[id] != "" {
+			child = history[id]
+		}
+		for _, candidate := range children {
+			if requested[candidate] {
+				child = candidate
+				break
+			}
+		}
+		restore(child, deep || sd.History == Deep)
+	}
+	root := m.Initial
+	for _, candidate := range sortedStateIDs(m.States) {
+		if m.States[candidate].parent == "" && requested[candidate] {
+			root = candidate
+			break
+		}
+	}
+	restore(root, false)
 
 	id := cfg.actorID
 	if id == "" {

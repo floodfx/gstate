@@ -796,8 +796,7 @@ func TestSCXMLNamespacePresent(t *testing.T) {
 // --- 18. Empty machine (edge case) ---
 
 func TestSCXMLEmptyMachine(t *testing.T) {
-	m := New[StateID, EventID, Context]("empty").
-		Build()
+	m := &Machine[StateID, EventID, Context]{ID: "empty"}
 
 	doc, err := ToSCXML(m)
 	if err != nil {
@@ -818,10 +817,8 @@ func TestSCXMLEmptyMachine(t *testing.T) {
 // --- 19. Machine with no initial set ---
 
 func TestSCXMLNoInitial(t *testing.T) {
-	m := New[StateID, EventID, Context]("no_init").
-		State("a", func(s *StateBuilder[StateID, EventID, Context]) {}).
-		State("b", func(s *StateBuilder[StateID, EventID, Context]) {}).
-		Build()
+	// Export also accepts manually assembled descriptive definitions.
+	m := &Machine[StateID, EventID, Context]{ID: "no_init", States: map[StateID]*StateDef[StateID, EventID, Context]{"a": {ID: "a"}, "b": {ID: "b"}}}
 
 	doc, err := ToSCXML(m)
 	if err != nil {
