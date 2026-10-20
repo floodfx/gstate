@@ -6,21 +6,19 @@ This example models a durable three-step workflow that survives process restarts
 
 ```mermaid
 ---
-title: Persistence
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state "one" as one
-    state "three" as three
-    state "two" as two
-	three --> [*]
-	[*] --> one
-	one --> two: NEXT
-	two --> three: FINISH
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> one
+    one(["one"])
+    three((("three")))
+    two(["two"])
+    one -->|"NEXT / action"| two
+    two -->|"FINISH / action"| three
 ```
 
 
@@ -31,11 +29,15 @@ stateDiagram-v2
 <?xml version="1.0" encoding="UTF-8"?>
 <scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="persistence_demo" initial="one">
   <state id="one">
-    <transition event="NEXT" target="two"></transition>
+    <transition event="NEXT" target="two">
+      <assign></assign>
+    </transition>
   </state>
   <final id="three"></final>
   <state id="two">
-    <transition event="FINISH" target="three"></transition>
+    <transition event="FINISH" target="three">
+      <assign></assign>
+    </transition>
   </state>
 </scxml>
 ```

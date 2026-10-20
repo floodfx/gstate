@@ -6,37 +6,33 @@ This example models a computer input system where a keyboard and mouse operate i
 
 ```mermaid
 ---
-title: Input System
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state active {
-        state active_fork <<fork>>
-        state active_join <<join>>
-        state keyboard {
-            [*] --> caps_off
-            state "caps_off" as caps_off
-            state "caps_on" as caps_on
-        }
-        state mouse {
-            [*] --> not_clicked
-            state "clicked" as clicked
-            state "not_clicked" as not_clicked
-        }
-    }
-	active_fork --> keyboard
-	keyboard --> active_join
-	active_fork --> mouse
-	mouse --> active_join
-	[*] --> active
-	caps_off --> caps_on: CAPS_LOCK
-	caps_on --> caps_off: CAPS_LOCK
-	clicked --> not_clicked: RELEASE
-	not_clicked --> clicked: CLICK
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> active
+    subgraph active ["active"]
+        direction LR
+        subgraph keyboard ["keyboard"]
+            __gstate_initial_6b6579626f617264(("●"))
+            __gstate_initial_6b6579626f617264 --> caps_off
+            caps_off(["caps_off"])
+            caps_on(["caps_on"])
+        end
+        subgraph mouse ["mouse"]
+            __gstate_initial_6d6f757365(("●"))
+            __gstate_initial_6d6f757365 --> not_clicked
+            clicked(["clicked"])
+            not_clicked(["not_clicked"])
+        end
+    end
+    caps_off -->|"CAPS_LOCK"| caps_on
+    caps_on -->|"CAPS_LOCK"| caps_off
+    clicked -->|"RELEASE"| not_clicked
+    not_clicked -->|"CLICK"| clicked
 ```
 
 

@@ -1,26 +1,27 @@
 # Observer
 
-This example attaches an **Observer** to a three-state machine (idle → loading → done) and shows the two main patterns: **live tracing** with a custom observer that prints transitions as they happen, and **post-hoc inspection** with a `RecordingObserver` that captures every lifecycle event for replay. Both observers are composed together with `MultiObserver` so a single `WithObserver` option wires up the full pipeline.
+This example attaches an **Observer** to a three-state machine (idle → loading → done) and shows the two main patterns: **live tracing** with a custom observer that prints transitions as they happen, and **post-hoc inspection** with a `RecordingObserver` that captures every lifecycle event for replay. Both observers are passed to `machine.WithObservers(logger, rec)`.
 
 ## State Diagram
 
 ```mermaid
 ---
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state "done" as done
-    state "idle" as idle
-    state "loading" as loading
-	done --> [*]
-	[*] --> idle
-	idle --> loading: START
-	loading --> done: done.invoke
-	loading --> done: error
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> idle
+    done((("done")))
+    idle(["idle"])
+    loading(["loading"])
+    idle -->|"START"| loading
+    __gstate_invoke_6c6f6164696e67{"__gstate_invoke_6c6f6164696e67"}
+    loading --> __gstate_invoke_6c6f6164696e67
+    __gstate_invoke_6c6f6164696e67 -->|"invoke.done"| done
+    __gstate_invoke_6c6f6164696e67 -->|"invoke.error"| done
 ```
 
 
@@ -46,7 +47,7 @@ stateDiagram-v2
 
 ## What Happens
 
-1. The machine starts in **idle**. A `loggingObserver` (which embeds `NopObserver` and overrides only `OnTransition`, `OnInvokeStarted`, and `OnInvokeCompleted`) is wired up alongside a `RecordingObserver` via `MultiObserver`.
+1. The machine starts in **idle**. A `loggingObserver` (which embeds `BaseObserver` and overrides only `OnTransition`, `OnInvokeStarted`, and `OnInvokeCompleted`) is wired up alongside a `RecordingObserver` via `machine.WithObservers(logger, rec)`.
 2. A `START` event transitions from **idle** to **loading**. The logger prints the transition in real time: `idle --START--> loading`.
 3. **loading** has an `Invoke` — a 50 ms async task. The logger prints when the invoke starts and when it completes, including the elapsed duration.
 4. When the invoke finishes, the machine auto-transitions to **done** (a `Final` state). The logger prints the synthetic transition `loading ----> done`.
@@ -55,11 +56,11 @@ stateDiagram-v2
 
 ## When To Use This
 
-- **Structured logging** — embed `NopObserver` and override `OnTransition` to emit structured log lines (JSON, logfmt) for every state change without touching business logic.
+- **Structured logging** — embed `BaseObserver` and override `OnTransition` to emit structured log lines (JSON, logfmt) for every state change without touching business logic.
 - **Metrics & tracing** — use `OnInvokeStarted`/`OnInvokeCompleted` to record invoke durations as histogram metrics or OpenTelemetry spans.
 - **Test assertions** — attach a `RecordingObserver` in tests to assert the exact sequence of lifecycle events without polling or `time.Sleep`.
 - **Audit trails** — serialize `RecordedEvent` payloads to a durable store for compliance or debugging. The JSON tags on `TransitionEvent`, `InvokeEvent`, etc. make this zero-effort.
-- **Debugging** — during development, drop in a `MultiObserver` with a logger to see exactly what the engine is doing without adding `fmt.Println` to callbacks.
+- **Debugging** — during development, register a logger with `WithObservers` to see exactly what the engine is doing without adding `fmt.Println` to callbacks.
 
 ## Output
 
@@ -88,7 +89,7 @@ Last transition as JSON:
     "actor_id": "<nanoid>",
     "from": "loading",
     "to": "done",
-    "context": {
+    "data": {
       "Attempts": 0
     },
     "timestamp": "..."

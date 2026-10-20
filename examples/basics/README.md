@@ -6,20 +6,19 @@ This example builds a simple counter state machine with two modes — **idle** a
 
 ```mermaid
 ---
-title: Counter
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state "active" as active
-    note left of active: entry / action<br/>exit / action
-    state "idle" as idle
-	[*] --> idle
-	active --> idle: STOP
-	idle --> active: START
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> idle
+    active(["active<br/>entry / action<br/>exit / action"])
+    idle(["idle"])
+    active -->|"STOP"| idle
+    idle -->|"INCREMENT / action"| idle
+    idle -->|"START"| active
 ```
 
 
@@ -30,13 +29,17 @@ stateDiagram-v2
 <?xml version="1.0" encoding="UTF-8"?>
 <scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="counter" initial="idle">
   <state id="active">
-    <onentry></onentry>
-    <onexit></onexit>
+    <onentry>
+      <log label="entry action"></log>
+    </onentry>
+    <onexit>
+      <log label="exit action"></log>
+    </onexit>
     <transition event="STOP" target="idle"></transition>
   </state>
   <state id="idle">
     <transition event="INCREMENT">
-      <assign location="incrementCount"></assign>
+      <assign></assign>
     </transition>
     <transition event="START" target="active"></transition>
   </state>

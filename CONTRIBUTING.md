@@ -4,7 +4,10 @@ Thanks for your interest in `gstate`. Issues and pull requests are welcome.
 
 ## Pull requests
 
-- Open a PR against `main`. CI runs `go build`, `go vet`, `go test`, and `go test -race`; please make sure all four are green locally before requesting review.
+- Use Go 1.26.6 or newer and install [just](https://just.systems/). Run `just install-tools` and put `$(go env GOPATH)/bin` on `PATH` unless you configured `GOBIN`.
+- Run `just ci` before every commit. It runs build, vet, lint, vulnerability scanning, tests, race tests, benchmark compile checks, and fuzz smoke tests. `just fix` applies safe lint fixes.
+- Follow red → green → refactor for every behavioral change. Documentation-only edits are exempt.
+- Open PRs against `main`. For Mermaid emission changes, also run `just mermaid-verify` with Node available and review the regenerated SVG reference artifacts. The renderer is pinned in `justfile`; SVG coordinates are not byte-compared. Run `just examples-verify` to check example README diagrams or `just examples-diagrams` to regenerate them; these two commands also require Python 3.
 - Add tests for new behavior. The repo uses deterministic synchronisation in tests (channels, `sync.WaitGroup`, observer barriers) — please avoid `time.Sleep` as a synchronisation primitive. `time.After` is acceptable only as a hard-timeout floor paired with a deterministic signal.
 
 ## Commit messages

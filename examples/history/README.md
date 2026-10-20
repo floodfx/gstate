@@ -6,26 +6,26 @@ This example models an app with two screens where you can switch back and forth 
 
 ```mermaid
 ---
-title: History
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state app {
-        [*] --> screen1
-        state "screen1" as screen1
-        state "screen2" as screen2
-    }
-    note right of app: [H]
-    state "idle" as idle
-	[*] --> app
-	app --> idle: GO_IDLE
-	screen1 --> screen2: SWITCH
-	screen2 --> screen1: SWITCH
-	idle --> app: WAKE
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> app
+    subgraph app ["app"]
+        __gstate_history_617070(("[H]"))
+        __gstate_initial_617070(("●"))
+        __gstate_initial_617070 --> screen1
+        screen1(["screen1"])
+        screen2(["screen2"])
+    end
+    idle(["idle"])
+    app -->|"GO_IDLE"| idle
+    screen1 -->|"SWITCH"| screen2
+    screen2 -->|"SWITCH"| screen1
+    idle -->|"WAKE"| app
 ```
 
 

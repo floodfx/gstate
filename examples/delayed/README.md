@@ -10,20 +10,19 @@ and the pending timer is cancelled — no cleanup code required.
 
 ```mermaid
 ---
-title: Timeout
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state "other_state" as other_state
-    state "timeout" as timeout
-    state "waiting" as waiting
-	[*] --> waiting
-	waiting --> other_state: USER_ACTION
-	waiting --> timeout: after 100ms
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> waiting
+    other_state(["other_state"])
+    timeout(["timeout"])
+    waiting(["waiting"])
+    waiting -->|"USER_ACTION"| other_state
+    waiting -->|"after 100ms"| timeout
 ```
 
 
@@ -37,10 +36,10 @@ stateDiagram-v2
   <state id="timeout"></state>
   <state id="waiting">
     <onentry>
-      <send event="_delay.waiting" delay="100ms"></send>
+      <send event="_delay.77616974696e67.0" delay="100ms"></send>
     </onentry>
     <transition event="USER_ACTION" target="other_state"></transition>
-    <transition event="_delay.waiting" target="timeout"></transition>
+    <transition event="_delay.77616974696e67.0" target="timeout"></transition>
   </state>
 </scxml>
 ```

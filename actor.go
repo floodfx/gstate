@@ -105,10 +105,10 @@ type config[S ~string, E ~string, D Cloner[D]] struct {
 // Option configures an [Actor] at [Start] or [Hydrate] time. Options are
 // constructed via methods on a typed [Machine] — [Machine.WithMailboxSize],
 // [Machine.WithObservers], [Machine.WithActorID] — which lets Go infer the
-// [S, E, C] type parameters from the machine so the call site needs no
+// [S, E, D] type parameters from the machine so the call site needs no
 // annotations:
 //
-//	actor := gstate.Start(m, ctx,
+//	actor := gstate.Start(m, initialData,
 //	    m.WithMailboxSize(500),
 //	    m.WithObservers(obs),
 //	    m.WithActorID("worker-42"),
@@ -124,8 +124,8 @@ func (m *Machine[S, E, D]) WithMailboxSize(n int) Option[S, E, D] {
 
 // WithObservers returns an [Option] that installs [Observer] values receiving
 // lifecycle callbacks for the actor.
-// The observers are invoked synchronously on the actor's event-processing
-// goroutine; see [Observer] for the full threading contract.
+// Observers run synchronously on the triggering goroutine; see [Observer]
+// for the threading and locking contract.
 func (m *Machine[S, E, D]) WithObservers(obs ...Observer[S, E, D]) Option[S, E, D] {
 	return func(c *config[S, E, D]) { c.observers = obs }
 }

@@ -41,8 +41,10 @@ const (
 	Deep
 )
 
-// Machine is the static, immutable definition of a statechart.
-// It serves as a blueprint for creating [Actor] instances.
+// Machine is the static definition shared by actors and exporters.
+// After Build, callers must not mutate its maps, definitions, callbacks or any
+// retained builder references while it is in use. Immutability is a caller
+// contract; the exported fields do not enforce it.
 type Machine[S ~string, E ~string, D Cloner[D]] struct {
 	// ID identifies this machine definition.
 	ID string
@@ -122,7 +124,10 @@ type InvokeDef[S ~string, E ~string, D Cloner[D]] struct {
 	//   Reads are lock-free and never race because the invoke goroutine owns this value.
 	// - mutate: applies updates to the live actor data under the actor's write lock.
 	//   The result of the mutation function replaces the live data. mutate is synchronous
-	//   and returns after the write commits. It no-ops if the state has exited or the actor stopped.
+	//   and returns after the write commits. It no-ops after invocation completion, state exit, or actor shutdown.
+	//
+	// Func must not synchronously call Stop on its actor; Stop waits for Func
+	// to return. Schedule Stop from another goroutine when needed.
 	//
 	// This field was previously named Src.
 	Func func(ctx context.Context, snap D, mutate func(func(D) D)) error
@@ -157,4 +162,3 @@ type Snapshot[S ~string, D Cloner[D]] struct {
 	// [Hydrate] restores it so telemetry correlation survives serialization.
 	ActorID ActorID `json:"actor_id,omitempty"`
 }
-

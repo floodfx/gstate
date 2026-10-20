@@ -6,24 +6,23 @@ This example models a service manager that spawns asynchronous work when it ente
 
 ```mermaid
 ---
-title: Service Manager
 config:
-    theme: default
-    maxTextSize: 50000
-    maxEdges: 500
-    fontSize: 16
+  theme: default
+  themeVariables:
+    fontSize: 16px
 ---
-stateDiagram-v2
-    state "error" as error
-    state "idle" as idle
-    state "loading" as loading
-    state "success" as success
-	error --> [*]
-	success --> [*]
-	[*] --> loading
-	loading --> idle: CANCEL
-	loading --> success: done.invoke
-	loading --> error: error
+flowchart TB
+    __gstate_start(("●"))
+    __gstate_start --> loading
+    error((("error")))
+    idle(["idle"])
+    loading(["loading"])
+    success((("success")))
+    loading -->|"CANCEL"| idle
+    __gstate_invoke_6c6f6164696e67{"__gstate_invoke_6c6f6164696e67"}
+    loading --> __gstate_invoke_6c6f6164696e67
+    __gstate_invoke_6c6f6164696e67 -->|"invoke.done"| success
+    __gstate_invoke_6c6f6164696e67 -->|"invoke.error"| error
 ```
 
 
