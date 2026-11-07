@@ -740,7 +740,7 @@ func BenchmarkSendTransitionLifecycle(b *testing.B) {
 // TestSendMailboxEnqueueAllocations measures only the documented enqueue path.
 // A mailbox without a consumer removes asynchronous interpreter allocations.
 func TestSendMailboxEnqueueAllocations(t *testing.T) {
-	actor := &Actor[benchState, benchEvent, benchCtx]{mailbox: make(chan envelope[benchEvent], 128), stopped: make(chan struct{})}
+	actor := &Actor[benchState, benchEvent, benchCtx]{mailbox: make(chan envelope[benchEvent, benchCtx], 128), stopped: make(chan struct{})}
 	allocations := testing.AllocsPerRun(100, func() { actor.Send(bEVPong) })
 	if allocations != 0 {
 		t.Fatalf("Send enqueue allocations=%v, want 0", allocations)
