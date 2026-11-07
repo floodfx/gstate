@@ -92,6 +92,8 @@ type StateDef[S ~string, E ~string, D Cloner[D]] struct {
 	entryLabel string
 	// exitLabel is a human-readable label for Exit actions, used in Mermaid output.
 	exitLabel string
+	// explicitType tracks whether StateBuilder.Type was called explicitly.
+	explicitType bool
 }
 
 // TransitionDef defines the rules for moving from one state to another.

@@ -49,6 +49,40 @@ func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *
 	return m
 }
 
+// Extend re-opens an existing top-level state in the machine for additional
+// configuration (such as adding transitions, actions, or child states from a
+// modular plugin). It panics if id is empty, does not exist, or is a nested child state.
+func (m *MachineBuilder[S, E, D]) Extend(id S, fn func(*StateBuilder[S, E, D])) *MachineBuilder[S, E, D] {
+	if id == "" {
+		panic("gstate: state ID must not be empty")
+	}
+	existing, ok := m.machine.States[id]
+	if !ok || existing == nil {
+		panic(fmt.Errorf("gstate: cannot extend unknown state %q", id))
+	}
+	if existing.parent != "" {
+		panic(fmt.Errorf("gstate: state %q is nested under %q; use parent StateBuilder.Extend", id, existing.parent))
+	}
+	if fn != nil {
+		fn(&StateBuilder[S, E, D]{
+			machine:      m.machine,
+			state:        existing,
+			explicitType: existing.explicitType,
+		})
+	}
+	return m
+}
+
+// Use applies one or more reusable builder functions (plugins) to the MachineBuilder in order.
+func (m *MachineBuilder[S, E, D]) Use(plugins ...func(*MachineBuilder[S, E, D])) *MachineBuilder[S, E, D] {
+	for _, p := range plugins {
+		if p != nil {
+			p(m)
+		}
+	}
+	return m
+}
+
 // Build validates and finalizes the machine. Treat it and all retained builder
 // references as read-only afterward; see Machine for the ownership contract.
 // It performs a static-analysis validation pass and panics if any invalid state,
@@ -307,8 +341,36 @@ func (s *StateBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) {
 	fn(child)
 	s.state.States[id] = child.state
 	// If a state has children, default its type to Compound unless explicitly set.
-	if s.state.Type == Atomic && !s.explicitType {
+	if s.state.Type == Atomic && !s.explicitType && !s.state.explicitType {
 		s.state.Type = Compound
+	}
+}
+
+// Extend re-opens an existing direct child state of this state for additional
+// configuration. It panics if id is empty or is not a direct child of this state.
+func (s *StateBuilder[S, E, D]) Extend(id S, fn func(*StateBuilder[S, E, D])) {
+	if id == "" {
+		panic("gstate: state ID must not be empty")
+	}
+	existing, ok := s.state.States[id]
+	if !ok || existing == nil {
+		panic(fmt.Errorf("gstate: state %q is not a direct child of %q", id, s.state.ID))
+	}
+	if fn != nil {
+		fn(&StateBuilder[S, E, D]{
+			machine:      s.machine,
+			state:        existing,
+			explicitType: existing.explicitType,
+		})
+	}
+}
+
+// Use applies one or more reusable builder functions (plugins) to this StateBuilder in order.
+func (s *StateBuilder[S, E, D]) Use(plugins ...func(*StateBuilder[S, E, D])) {
+	for _, p := range plugins {
+		if p != nil {
+			p(s)
+		}
 	}
 }
 
@@ -321,6 +383,7 @@ func (s *StateBuilder[S, E, D]) Initial(id S) {
 func (s *StateBuilder[S, E, D]) Type(t StateType) {
 	s.state.Type = t
 	s.explicitType = true
+	s.state.explicitType = true
 }
 
 // Entry adds a function to be executed when this state is entered.

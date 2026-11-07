@@ -54,7 +54,7 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// nextGen tracks the monotonic generation count for state entries.
 	nextGen         uint64
 	timers          map[S][]*time.Timer
-	mailbox         chan envelope[E]
+	mailbox         chan envelope[E, D]
 	mu              sync.RWMutex
 	stopOnce        sync.Once
 	stopRequestOnce sync.Once
@@ -90,19 +90,22 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	sortedActive []S
 }
 
-// envelope carries an event together with the request-scoped context that
-// originated it through the actor's mailbox.
-type envelope[E ~string] struct {
-	ctx   context.Context
-	event E
+// envelope carries an event together with the request-scoped context and
+// optional transactional payload mutator that originated it through the actor's mailbox.
+type envelope[E ~string, D any] struct {
+	ctx    context.Context
+	event  E
+	mutate func(D) D
 }
 
 // config holds the resolved configuration for an [Actor]. It is built by
 // applying [Option] values passed to [Start].
 type config[S ~string, E ~string, D Cloner[D]] struct {
-	mailboxSize int
-	observers   []Observer[S, E, D]
-	actorID     ActorID
+	mailboxSize        int
+	observers          []Observer[S, E, D]
+	actorID            ActorID
+	hydrateServices    bool
+	hydrateServicesSet bool
 }
 
 // Option configures an [Actor] at [Start] or [Hydrate] time. Options are
@@ -140,6 +143,20 @@ func (m *Machine[S, E, D]) WithActorID(id ActorID) Option[S, E, D] {
 	return func(c *config[S, E, D]) { c.actorID = id }
 }
 
+// WithHydrateServices returns an [Option] for [Hydrate] that controls whether
+// background services ([InvokeDef] functions and delayed transition timers)
+// on the initially restored states are automatically started during hydration.
+// When omitted, Hydrate defaults to starting services on restored states (true).
+// Passing false skips starting services for the states restored from the
+// snapshot while still starting services normally on any states entered via
+// subsequent transitions.
+func (m *Machine[S, E, D]) WithHydrateServices(restart bool) Option[S, E, D] {
+	return func(c *config[S, E, D]) {
+		c.hydrateServices = restart
+		c.hydrateServicesSet = true
+	}
+}
+
 // Start creates and launches a new [Actor] for the given machine. Options are
 // applied in order; later values for the same option win. The returned Actor
 // is already running and ready to receive events via [Actor.Send] or
@@ -171,7 +188,7 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 		stateGens:   make(map[S]uint64),
 		invokeGens:  make(map[S]uint64),
 		timers:      make(map[S][]*time.Timer),
-		mailbox:     make(chan envelope[E], cfg.mailboxSize),
+		mailbox:     make(chan envelope[E, D], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
 		done:        make(chan struct{}),
 		id:          cfg.actorID,
@@ -302,22 +319,26 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 		stateGens:   make(map[S]uint64),
 		invokeGens:  make(map[S]uint64),
 		timers:      make(map[S][]*time.Timer),
-		mailbox:     make(chan envelope[E], cfg.mailboxSize),
+		mailbox:     make(chan envelope[E, D], cfg.mailboxSize),
 		stopped:     make(chan struct{}),
 		done:        make(chan struct{}),
 		id:          id,
 	}
 	a.installObservers(cfg.observers)
 
+	restartInitialServices := !cfg.hydrateServicesSet || cfg.hydrateServices
+
 	// Restart background services for all active states in deterministic
-	// root-to-leaf order.
+	// root-to-leaf order when enabled.
 	a.mu.Lock()
 	sorted := a.getSortedActiveStatesLocked()
 	for i := len(sorted) - 1; i >= 0; i-- {
 		sID := sorted[i]
 		a.nextGen++
 		a.stateGens[sID] = a.nextGen
-		a.restartServices(context.Background(), sID)
+		if restartInitialServices {
+			a.restartServices(context.Background(), sID)
+		}
 	}
 	// Stabilize restored or repaired configurations before exposing the actor.
 	a.handleAlwaysInternal(context.Background())
@@ -896,6 +917,13 @@ func (a *Actor[S, E, D]) Send(event E) {
 	_ = a.SendCtx(context.Background(), event)
 }
 
+// SendWith enqueues an event paired with a transactional payload reducer fn
+// using [context.Background]. See [Actor.SendCtxWith] for the payload and
+// rollback semantics.
+func (a *Actor[S, E, D]) SendWith(event E, fn func(D) D) {
+	_ = a.SendCtxWith(context.Background(), event, fn)
+}
+
 // SendCtx enqueues an event in the actor's mailbox carrying the supplied
 // request-scoped context. The context is threaded into every [Observer]
 // callback fired in response to this event (including Always transitions
@@ -913,6 +941,18 @@ func (a *Actor[S, E, D]) Send(event E) {
 // things happens — a slot opens, ctx is done, or the actor is stopped.
 // It never blocks forever.
 func (a *Actor[S, E, D]) SendCtx(ctx context.Context, event E) error {
+	return a.SendCtxWith(ctx, event, nil)
+}
+
+// SendCtxWith enqueues an event together with a typed payload reducer fn.
+// When the actor processes the event:
+//   - fn is applied to a cloned copy of the actor's data before transition
+//     guards are evaluated, allowing guards to inspect the event payload.
+//   - If at least one transition fires, the mutated data is committed before
+//     exit, transition Assign, and entry actions run.
+//   - If no transition fires (the event is dropped), the mutation is discarded
+//     and the actor's data remains unchanged.
+func (a *Actor[S, E, D]) SendCtxWith(ctx context.Context, event E, fn func(D) D) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -928,7 +968,7 @@ func (a *Actor[S, E, D]) SendCtx(ctx context.Context, event E) error {
 	default:
 	}
 	select {
-	case a.mailbox <- envelope[E]{ctx: ctx, event: event}:
+	case a.mailbox <- envelope[E, D]{ctx: ctx, event: event, mutate: fn}:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -953,14 +993,14 @@ func (a *Actor[S, E, D]) loop() {
 		}
 		select {
 		case env := <-a.mailbox:
-			a.handleEvent(env.ctx, env.event)
+			a.handleEvent(env.ctx, env.event, env.mutate)
 		case <-a.stopped:
 			return
 		}
 	}
 }
 
-func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
+func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E, mutate func(D) D) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -968,6 +1008,11 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 	case <-a.stopped:
 		return
 	default:
+	}
+
+	prevData := a.data
+	if mutate != nil {
+		a.data = mutate(a.data.Clone())
 	}
 
 	if len(a.eventReceivedObs) > 0 {
@@ -988,7 +1033,10 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E) {
 		return
 	}
 
-	// No transition fired for this event.
+	// No transition fired for this event; roll back any uncommitted payload mutation.
+	if mutate != nil {
+		a.data = prevData
+	}
 	if len(a.eventDroppedObs) > 0 {
 		e := a.newEventNotice(event, "no_transition")
 		for _, o := range a.eventDroppedObs {
