@@ -149,11 +149,15 @@ s.State(StateActive, func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 - **`Entry`** runs when the state is entered, before any child states are resolved.
 - **`Exit`** runs when the state is left, as part of the transition.
 
-Optional `EntryLabel(name)` / `ExitLabel(name)` attach a human-readable name to the actions. The name doesn't change runtime behavior; it shows up inside the state's node in Mermaid output (see [§Mermaid Diagrams](#mermaid-diagrams)) so a reader of the generated diagram can tell *what* runs on entry/exit without reading the builder code.
+`Entry` and `Exit` are **additive**: calling `Entry` or `Exit` multiple times (for example across composed plugins) appends reducers that run in registration order.
+
+Optional `EntryLabel(name)` / `ExitLabel(name)` attach a human-readable name to the **most recently added** `Entry` or `Exit` action, or you can attach both at once with `EntryNamed(name, fn)` / `ExitNamed(name, fn)`. Every action's label is preserved in order inside the state's node in Mermaid output and in `<onentry>` / `<onexit>` SCXML logs (see [§Visualization & Export](#visualization--export)).
 
 ```go
-s.Entry(loadUserPrefs)
-s.EntryLabel("loadUserPrefs")
+s.EntryNamed("loadUserPrefs", loadUserPrefs)
+s.Entry(auditStateEntry)
+s.EntryLabel("auditStateEntry")
+s.ExitNamed("flushTelemetry", flushTelemetry)
 ```
 
 ---
@@ -280,7 +284,7 @@ s.Invoke(func(ctx context.Context, snap MyData, mutate func(func(MyData) MyData)
 
 The `mutate` callback accepts a function that receives the current data and returns the updated data. This update runs under the actor's internal write lock, ensuring complete race-free synchronization. If the state is exited or the actor stops before the callback runs, the mutation is safely ignored (no-op'd) to prevent stale/obsolete writes.
 
-Optional `InvokeLabel(name)` names the invocation for Mermaid output. When both success and error targets are set, the labeled invoke renders as a diamond pseudo-state with `invoke.done` and `invoke.error` outgoing arrows — see [§Mermaid Diagrams](#mermaid-diagrams).
+Optional `InvokeLabel(name)` names the current invocation for Mermaid output and serves as the expected identity contract for `ReplaceInvoke(expectedLabel, ...)` when composing plugins. It requires a preceding `Invoke`, a non-empty name, and can only be set once per `Invoke`. When both success and error targets are set, the labeled invoke renders as a diamond pseudo-state with `invoke.done` and `invoke.error` outgoing arrows — see [§Mermaid Diagrams](#mermaid-diagrams).
 
 ```go
 s.Invoke(callLLM, "checking_response", "failed")
@@ -317,9 +321,9 @@ s.State("check_balance", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) 
 
 ---
 
-## 10. Final States
+## 10. Final States and Local Completion (`OnDone`)
 
-A `Final` state indicates the completion of its parent's process. Once entered, no further transitions are processed from that state.
+A `Final` state indicates the completion of its enclosing compound state or parallel region. Once entered, no further transitions are processed from that final state.
 
 ```go
 s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
@@ -327,11 +331,9 @@ s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 })
 ```
 
-A compound state completes when its active **direct child** is Final. A parallel
-state completes when every declared region is complete. An ordinary compound
-ancestor does not complete merely because a nested workflow finished.
+A compound state is locally complete when its active **direct child** is `Final`. A parallel state is locally complete when **every declared region** is locally complete. An enclosing compound ancestor does not automatically complete merely because a deeper nested child workflow reached `Final`.
 
-Use the parent's `OnDone` to connect a reusable finite workflow to its caller:
+Use `OnDone()` on a compound or parallel state to route local completion to the next step in the parent workflow:
 
 ```go
 s.Initial("working")
@@ -344,25 +346,50 @@ s.State("finished", func(done *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 s.State("failed", func(failed *gstate.StateBuilder[MyState, MyEvent, MyData]) {
     failed.Type(gstate.Final)
 })
-s.OnDone().Guard(hasError).GoTo("error")
+s.OnDone().Guard(hasError).GuardLabel("hasError").GoTo("error")
 s.OnDone().GoTo("next")
 ```
 
-`OnDone` supports `Guard`, `Assign`, and their labels. Its source must be compound
-or parallel, its target must leave that source's subtree, and its last candidate
-must be unconditional. Completion does not imply success: guards inspect the
-outcome before exit reducers run; Assign runs after exit reducers. Eventless
-`Always` transitions settle before queued completion transitions. Both share the
-`ErrAlwaysLimit` transition budget. Completion dispatch waits until the entire
-selected parallel event batch has executed. Observers receive the normal
-transition with the source parent and zero event value; exports label it `done`.
-Hydration seeds restored final leaves without re-running their entry reducers.
+`OnDone` supports `Guard`, `GuardLabel`, `Assign`, and `ActionLabel`. Its source must be compound or parallel, its target must leave that source's subtree, and its final candidate must be unconditional (`Guard == nil`). Completion does not imply success: guards inspect the outcome before exit reducers run, and `Assign` runs after exit reducers. Eventless `Always` transitions settle before queued completion transitions, and both share the `ErrAlwaysLimit` transition budget. Completion dispatch waits until the entire selected parallel event batch has executed. Observers receive the normal transition with the completed parent as `From` and the zero event value; Mermaid exports label it `done` and SCXML exports use `done.state.<sourceID>`. Hydration seeds restored final leaves without re-running their entry reducers.
 
 > **Try it:** [agent example](./examples/agent) — guards, always transitions, retries, and final states in a real workflow.
 
 ---
 
-## 11. Build-Time Static Validation
+## 11. Modular Composition (`Use`, `Extend`, and Checked Replacements)
+
+Complex statecharts can be assembled from reusable plugins using `MachinePlugin[S, E, D]` (`func(*MachineBuilder[S, E, D])`) and `StatePlugin[S, E, D]` (`func(*StateBuilder[S, E, D])`):
+
+- **`Use(plugins...)`** applies one or more builder plugins in registration order on a `MachineBuilder` or `StateBuilder`.
+- **`Extend(id, fn)`** re-opens an already-declared child state so a plugin can add substates, `Entry`/`Exit` reducers, transitions, or child workflows without clobbering existing definitions.
+- **Exclusive-write protection**: Repeated calls to `Initial`, `Invoke`, conflicting explicit `Type`, or conflicting explicit `History` on the same state record a build-time validation error and retain the previous valid configuration.
+- **Checked replacements**: When a plugin intentionally overrides a host default, it declares the expected prior configuration explicitly so conflicting plugins fail validation in any registration order:
+  - `ReplaceInitial(expectedChild, nextChild)` — replaces an existing initial state on a `MachineBuilder` or `StateBuilder`.
+  - `ReplaceInvoke(expectedLabel, fn, onDone, onError)` — replaces an existing `Invoke` whose `InvokeLabel` matches `expectedLabel`.
+  - `ReplaceOnDone(expectedTarget)` — replaces a single unconditional `OnDone` route targeting `expectedTarget` with a new `OnDone` route (which can be guarded and followed by additional `OnDone` candidates ending in an unconditional fallback).
+
+```go
+func ApprovalPlugin(m *gstate.MachineBuilder[MyState, MyEvent, MyData]) {
+    m.Extend("root", func(root *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+        root.Extend("tool_gate", func(gate *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+            gate.ReplaceInitial("pass_through", "evaluate_policy")
+            gate.State("evaluate_policy", PolicyStatePlugin)
+            gate.Extend("evaluate_policy", func(eval *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+                eval.OnDone().GoTo("pass_through")
+            })
+            gate.ReplaceOnDone("exec_tool").
+                Guard(isApproved).
+                GuardLabel("isApproved").
+                GoTo("exec_tool")
+            gate.OnDone().GoTo("skip_tool")
+        })
+    })
+}
+```
+
+---
+
+## 12. Build-Time Static Validation
 
 To prevent silent runtime errors (such as transitions to non-existent states due to typos), `gstate` performs static-analysis validation at build time when you call `Build()`. 
 
@@ -420,7 +447,7 @@ _ = gstate.New[MyState, MyEvent, MyData]("invalid_target").
 
 Each eventless (`Always`) sequence has a budget of `max(100, 2 * number of states)` transitions. If another enabled transition would exceed that budget, the actor stops, cancels services, and exposes `gstate.ErrAlwaysLimit` through `actor.Err()`. This is a resource bound, not proof of a cycle. Finite chains within the budget settle normally.
 
-## 12. Observing Lifecycle Events
+## 13. Observing Lifecycle Events
 
 When you want to record transitions, guard outcomes, state entries/exits, transition actions, and invoked services — for telemetry, tracing, audit logs, or just to debug what your machine is doing — you do **not** need to wrap every `Entry`, `Exit`, `Guard`, and `Invoke` by hand. Pass one or more observers to `Start`:
 
@@ -571,8 +598,9 @@ actor := gstate.Start(machine, MyData{Count: 0},
 Available options:
 
 - `WithMailboxSize(n)` — buffered capacity for the event channel. Default `100`.
-- `WithObservers(obs...)` — install one or more [observers](#12-observing-lifecycle-events). Variadic; pass any number of observers (each implementing whichever narrow callback interfaces it cares about). When omitted, no observer is installed and the engine skips payload construction entirely.
+- `WithObservers(obs...)` — install one or more [observers](#13-observing-lifecycle-events). Variadic; pass any number of observers (each implementing whichever narrow callback interfaces it cares about). When omitted, no observer is installed and the engine skips payload construction entirely.
 - `WithActorID(id)` — override the auto-generated [`ActorID`](#actor-identity).
+- `WithHydrateServices(enabled)` — on `Hydrate`, controls whether restored active states automatically start their `Invoke` services and `After` delayed timers (defaults to `true`; pass `false` to inspect or resume a snapshot without re-triggering in-flight side effects).
 
 ### Actor Identity
 
@@ -588,11 +616,15 @@ fmt.Println(actor.ID()) // e.g. "V1StGXR8_Z5j"
 ### Sending Events
 
 ```go
-actor.Send(EventIncrement)            // fire-and-forget
-err := actor.SendCtx(ctx, EventStart) // ctx-honoring, returns error
+actor.Send(EventIncrement)                           // fire-and-forget
+err := actor.SendCtx(ctx, EventStart)                // ctx-honoring, returns error
+actor.SendWith(EventPrompt, attachPrompt)            // fire-and-forget with transactional payload reducer
+err = actor.SendCtxWith(ctx, EventPrompt, attachPrompt) // ctx-honoring with transactional payload reducer
 ```
 
 Events are queued in a channel-based mailbox and processed sequentially, ensuring state transitions are never concurrent.
+
+`SendWith` and `SendCtxWith` apply a payload reducer `func(D) D` to a cloned copy of the actor's data *before* transition guards are evaluated, so guards can inspect the incoming event's payload. If no transition is enabled (`OnEventDropped`), the candidate data is discarded and the actor's state data remains unchanged.
 
 `Send` is a thin wrapper around `SendCtx(context.Background(), event)` that discards the returned error. Use it when you don't have a request-scoped context and don't need to react to delivery failure. After `Stop` it is a no-op (no panic, no delivery).
 
@@ -813,8 +845,9 @@ Also available:
 | Parallel states | ✓ (fork/join) | ✓ (`<parallel>`) |
 | Initial states | ✓ | ✓ |
 | Final states | ✓ | ✓ |
+| Local completion (`OnDone`) | ✓ (`done`) | ✓ (`done.state.<id>`) |
 | Guards (with labels) | ✓ | ✓ (`cond`) |
-| Entry/exit actions | ✓ (notes) | ✓ |
+| Entry/exit actions (per-action labels) | ✓ (state header) | ✓ (`<onentry>` / `<onexit>` `<log>`) |
 | Delayed transitions | ✓ | ✓ (`<send>` + `_delay.<hex>.<index>`) |
 | History (shallow/deep) | ✓ (notes) | ✓ (`<history>`) |
 | Invoke (onDone/onError) | ✓ | ✓ |
