@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" name="completion" initial="prepare">
+  <state id="failed"></state>
+  <state id="prepare" initial="prepared">
+    <onentry>
+      <log label="loadMemory"></log>
+      <log label="configureThinking"></log>
+      <log label="entry action"></log>
+    </onentry>
+    <onexit>
+      <log label="releaseScratch"></log>
+    </onexit>
+    <transition event="done.state.prepare" cond="approved" target="ready">
+      <assign location="acceptResult"></assign>
+    </transition>
+    <transition event="done.state.prepare" target="failed"></transition>
+    <final id="prepared">
+      <onentry>
+        <log label="publishResult"></log>
+      </onentry>
+    </final>
+  </state>
+  <state id="ready"></state>
+</scxml>

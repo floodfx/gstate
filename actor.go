@@ -47,7 +47,9 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// stateGens maps active state IDs to their active entry generation token.
 	// This token ensures that a stale timer or invoke completion from a previous
 	// state entry cannot trigger transitions after the state has exited or re-entered.
-	stateGens map[S]uint64
+	stateGens           map[S]uint64
+	pendingFinalEntries []completionOccurrence[S]
+	pendingCompletions  []completionOccurrence[S]
 	// invokeGens maps active state IDs to their active invoke mutation generation token.
 	// It is cleared as soon as Invoke.Func returns or the state exits.
 	invokeGens map[S]uint64
@@ -200,7 +202,7 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 	a.enterState(context.Background(), m.Initial)
 
 	// Handle any transient transitions that fire immediately
-	a.handleAlwaysInternal(context.Background())
+	a.stabilizeLocked(context.Background())
 	a.getSortedActiveStatesLocked()
 	// If the Initial chain landed on a top-level "done" state, initiate
 	// shutdown synchronously before releasing the lock.
@@ -340,8 +342,13 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 			a.restartServices(context.Background(), sID)
 		}
 	}
+	for _, id := range sorted {
+		if a.machine.States[id].Type == Final {
+			a.pendingFinalEntries = append(a.pendingFinalEntries, completionOccurrence[S]{id, a.stateGens[id]})
+		}
+	}
 	// Stabilize restored or repaired configurations before exposing the actor.
-	a.handleAlwaysInternal(context.Background())
+	a.stabilizeLocked(context.Background())
 	a.getSortedActiveStatesLocked()
 	// If the hydrated configuration has reached a "done" state, initiate
 	// shutdown synchronously before releasing the lock.
@@ -475,11 +482,11 @@ func (a *Actor[S, E, D]) newEventNotice(event E, reason string) *EventNotice[S, 
 //
 //   - Final: trivially done.
 //   - Atomic (non-Final): never done.
-//   - Compound: done iff its currently-active child is done.
+//   - Compound: done iff its active direct child is Final.
 //   - Parallel: done iff every region is done.
 func (a *Actor[S, E, D]) isStateDoneLocked(sID S) bool {
 	sd := a.machine.States[sID]
-	if sd == nil {
+	if sd == nil || !a.active[sID] {
 		return false
 	}
 	switch sd.Type {
@@ -491,7 +498,7 @@ func (a *Actor[S, E, D]) isStateDoneLocked(sID S) bool {
 		// Exactly one child of a compound state is active.
 		for childID := range sd.States {
 			if a.active[childID] {
-				return a.isStateDoneLocked(childID)
+				return a.machine.States[childID].Type == Final
 			}
 		}
 		return false
@@ -552,7 +559,7 @@ func (a *Actor[S, E, D]) checkAndInitiateAutoStopLocked() {
 			break
 		}
 	}
-	if found && a.isStateDoneLocked(topLevel) {
+	if found && len(a.machine.States[topLevel].OnDone) == 0 && a.isStateDoneLocked(topLevel) {
 		a.initiateShutdownLocked()
 	}
 }
@@ -720,7 +727,7 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 			ctx := context.WithoutCancel(invokeCtx)
 			var zero E
 			a.executeTransition(ctx, id, &TransitionDef[S, E, D]{Action: fn}, zero)
-			a.handleAlwaysInternal(ctx)
+			a.stabilizeLocked(ctx)
 			a.getSortedActiveStatesLocked()
 			a.checkAndInitiateAutoStopLocked()
 		}
@@ -1027,7 +1034,7 @@ func (a *Actor[S, E, D]) handleEvent(ctx context.Context, event E, mutate func(D
 		a.executeTransition(ctx, candidate.source, candidate.transition, event)
 	}
 	if len(selected) > 0 {
-		a.handleAlwaysInternal(ctx)
+		a.stabilizeLocked(ctx)
 		a.getSortedActiveStatesLocked()
 		a.checkAndInitiateAutoStopLocked()
 		return
@@ -1288,6 +1295,9 @@ func (a *Actor[S, E, D]) enterSingleState(ctx context.Context, id S) {
 	for _, action := range stateDef.Entry {
 		a.data = action(a.data)
 	}
+	if stateDef.Type == Final {
+		a.pendingFinalEntries = append(a.pendingFinalEntries, completionOccurrence[S]{id, a.stateGens[id]})
+	}
 
 	if len(a.stateEnteredObs) > 0 {
 		e := a.newStateEvent(id)
@@ -1330,7 +1340,7 @@ func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID
 	}
 
 	a.executeTransition(ctx, sourceID, t, zero)
-	a.handleAlwaysInternal(ctx)
+	a.stabilizeLocked(ctx)
 	a.getSortedActiveStatesLocked()
 	a.checkAndInitiateAutoStopLocked()
 }
@@ -1384,60 +1394,6 @@ func (a *Actor[S, E, D]) isDescendant(childID, parentID S) bool {
 		}
 	}
 	return false
-}
-
-// handleAlwaysInternal checks active states for Always transitions.
-// Must be called with a write lock.
-// It includes a circuit breaker to prevent infinite loops.
-func (a *Actor[S, E, D]) handleAlwaysInternal(ctx context.Context) {
-	maxIterations := max(100, 2*len(a.machine.States))
-	iterations := 0
-	var zero E
-
-	for {
-		transitioned := false
-		sortedActive := a.getSortedActiveStatesLocked()
-
-		for _, sID := range sortedActive {
-			stateDef := a.machine.States[sID]
-			if stateDef == nil {
-				// Hydrate accepts arbitrary Active state IDs; ignore any
-				// that don't correspond to a state in this machine.
-				continue
-			}
-			for _, t := range stateDef.Always {
-				if t.Guard != nil {
-					ok := t.Guard(a.data)
-					if len(a.guardObs) > 0 {
-						e := a.newGuardEvent(sID, zero, t.Target, ok)
-						for _, o := range a.guardObs {
-							o.OnGuardEvaluated(ctx, e)
-						}
-					}
-					if !ok {
-						continue
-					}
-				}
-				if iterations == maxIterations {
-					a.terminalErr = ErrAlwaysLimit
-					a.initiateShutdownLocked()
-					return
-				}
-				iterations++
-
-				a.executeTransition(ctx, sID, t, zero)
-				transitioned = true
-				break // restart loop to re-evaluate active states
-			}
-			if transitioned {
-				break
-			}
-		}
-
-		if !transitioned {
-			break
-		}
-	}
 }
 
 func sortedStateIDs[S ~string, V any](states map[S]V) []S {

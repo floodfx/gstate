@@ -180,7 +180,11 @@ func TestServiceCompletionScenarios(t *testing.T) {
 					}, "done", "")
 				}
 			}).State("done", func(s *StateBuilder[string, string, Context]) { s.Type(Final) }).Build()
-			a := Start(m, Context{}, m.WithObservers(ObserverFuncs[string, string, Context]{TransitionFunc: func(context.Context, *TransitionEvent[string, string, Context]) { done <- struct{}{} }}))
+			a := Start(m, Context{}, m.WithObservers(ObserverFuncs[string, string, Context]{TransitionFunc: func(_ context.Context, e *TransitionEvent[string, string, Context]) {
+				if e.To == "done" {
+					done <- struct{}{}
+				}
+			}}))
 			defer a.Stop()
 			select {
 			case <-done:

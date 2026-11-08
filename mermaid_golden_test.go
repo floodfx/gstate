@@ -17,6 +17,7 @@ func TestMermaidGoldens(t *testing.T) {
 		m    any
 	}{
 		{"basics", basicGoldenMachine()},
+		{"completion", completionGoldenMachine()},
 		{"hierarchy", hierarchyGoldenMachine()},
 		{"parallel", parallelGoldenMachine()},
 		{"history", historyGoldenMachine()},

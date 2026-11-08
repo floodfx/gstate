@@ -240,6 +240,24 @@ func actionDescription(label, fallback string) string {
 	}
 	return fallback
 }
+
+// actionLabelAt tolerates directly populated exported callback slices: missing
+// private builder metadata describes an unnamed action rather than omitting it.
+func actionLabelAt(labels []string, index int) string {
+	if index < len(labels) {
+		return labels[index]
+	}
+	return ""
+}
+
+func lifecycleDescriptions(count int, labels []string, fallback string) []*SCXMLLog {
+	logs := make([]*SCXMLLog, count)
+	for i := range logs {
+		logs[i] = &SCXMLLog{Label: actionDescription(actionLabelAt(labels, i), fallback)}
+	}
+	return logs
+}
+
 func delayedEventID[S ~string](id S, index int) string {
 	return fmt.Sprintf("_delay.%x.%d", string(id), index)
 }
@@ -272,6 +290,8 @@ type SCXMLSend struct {
 }
 
 // ToSCXML converts a gstate Machine definition into an SCXML document.
+// Go guards, assigns, and lifecycle callbacks are described by their labels;
+// the export does not serialize their executable Go implementations.
 func ToSCXML[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D]) (*SCXMLDocument, error) {
 	doc := &SCXMLDocument{
 		XMLNS:   "http://www.w3.org/2005/07/scxml",
@@ -322,7 +342,7 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 	}
 
 	if len(def.Entry) > 0 {
-		node.OnEntry = &SCXMLOnEntry{Logs: []*SCXMLLog{{Label: actionDescription(def.entryLabel, "entry action")}}}
+		node.OnEntry = &SCXMLOnEntry{Logs: lifecycleDescriptions(len(def.Entry), def.entryLabels, "entry action")}
 	}
 
 	if len(def.Delayed) > 0 {
@@ -338,7 +358,7 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 	}
 
 	if len(def.Exit) > 0 {
-		node.OnExit = &SCXMLOnExit{Logs: []*SCXMLLog{{Label: actionDescription(def.exitLabel, "exit action")}}}
+		node.OnExit = &SCXMLOnExit{Logs: lifecycleDescriptions(len(def.Exit), def.exitLabels, "exit action")}
 	}
 
 	// Use eventOrder to preserve declaration order of transitions
@@ -350,6 +370,10 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 
 	for _, t := range def.Always {
 		node.Transitions = append(node.Transitions, convertTransition(t, ""))
+	}
+
+	for _, t := range def.OnDone {
+		node.Transitions = append(node.Transitions, convertTransition(t, "done.state."+string(def.ID)))
 	}
 
 	for i, t := range def.Delayed {
@@ -409,10 +433,10 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 func convertFinalNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D], m *Machine[S, E, D]) (SCXMLNode, error) {
 	node := SCXMLNode{Kind: NodeFinal, ID: string(def.ID)}
 	if len(def.Entry) > 0 {
-		node.OnEntry = &SCXMLOnEntry{Logs: []*SCXMLLog{{Label: actionDescription(def.entryLabel, "entry action")}}}
+		node.OnEntry = &SCXMLOnEntry{Logs: lifecycleDescriptions(len(def.Entry), def.entryLabels, "entry action")}
 	}
 	if len(def.Exit) > 0 {
-		node.OnExit = &SCXMLOnExit{Logs: []*SCXMLLog{{Label: actionDescription(def.exitLabel, "exit action")}}}
+		node.OnExit = &SCXMLOnExit{Logs: lifecycleDescriptions(len(def.Exit), def.exitLabels, "exit action")}
 	}
 	return node, nil
 }

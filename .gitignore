@@ -1,5 +1,6 @@
 node_modules/
 package*.json
+.dev/
 
 # Output of `just bench-trend` (CI artifact, regenerated each run).
 bench.txt

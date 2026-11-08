@@ -20,6 +20,7 @@ func TestSCXMLGoldenExamples(t *testing.T) {
 
 	tests := []testCase{
 		{"basics", basicGoldenMachine()},
+		{"completion", completionGoldenMachine()},
 		{"hierarchy", hierarchyGoldenMachine()},
 		{"parallel", parallelGoldenMachine()},
 		{"history", historyGoldenMachine()},
@@ -214,4 +215,3 @@ func TestSCXMLValidatesAgainstW3C(t *testing.T) {
 		}
 	})
 }
-
