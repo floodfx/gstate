@@ -17,9 +17,10 @@ const (
 	// Parallel represents a state where all of its child regions are active simultaneously.
 	Parallel
 	// Final represents a state that indicates the completion of its parent's
-	// process. When the actor's top-level active state has reached "done"
-	// (an atomic Final, a compound whose active child is done, or a parallel
-	// whose every region is done), the actor stops itself automatically.
+	// process. A compound state completes only when its direct active child is
+	// Final; a parallel state completes when all its regions complete. Local
+	// completion routes through OnDone and does not recursively complete an
+	// enclosing compound. An unhandled completed top-level state stops the actor.
 	// See [Actor.Stop] for the shutdown contract.
 	//
 	// Machines that contain no Final state never auto-stop; their actors run
@@ -52,6 +53,9 @@ type Machine[S ~string, E ~string, D Cloner[D]] struct {
 	Initial S
 	// States is a flat map of every state (including nested) for O(1) lookup.
 	States map[S]*StateDef[S, E, D]
+
+	buildErrors []error
+	initialSet  bool
 }
 
 // StateDef defines the properties and behavior of a single state in the machine.
@@ -69,6 +73,8 @@ type StateDef[S ~string, E ~string, D Cloner[D]] struct {
 	Transitions map[E][]*TransitionDef[S, E, D]
 	// Always holds eventless transitions evaluated on state entry in declaration order.
 	Always []*TransitionDef[S, E, D]
+	// OnDone holds local completion transitions for compound and parallel states.
+	OnDone []*TransitionDef[S, E, D]
 	// Delayed holds time-based transitions that fire after their After duration.
 	Delayed []*TransitionDef[S, E, D]
 	// Entry holds functions called in order when entering this state.
@@ -88,10 +94,12 @@ type StateDef[S ~string, E ~string, D Cloner[D]] struct {
 	path []S
 	// eventOrder tracks declaration order of transition event keys.
 	eventOrder []E
-	// entryLabel is a human-readable label for Entry actions, used in Mermaid output.
-	entryLabel string
-	// exitLabel is a human-readable label for Exit actions, used in Mermaid output.
-	exitLabel string
+	// Action labels are aligned with the exported callback slices.
+	entryLabels []string
+	exitLabels  []string
+	initialSet  bool
+	invokeSet   bool
+	historySet  bool
 	// explicitType tracks whether StateBuilder.Type was called explicitly.
 	explicitType bool
 }
@@ -126,9 +134,9 @@ type InvokeDef[S ~string, E ~string, D Cloner[D]] struct {
 	//   Reads are lock-free and never race because the invoke goroutine owns this value.
 	// - mutate: applies updates to the live actor data under the actor's write lock.
 	//   The result of the mutation function replaces the live data. mutate is synchronous
-	//   and returns after the write, observer notifications, and Always settling.
+	//   and returns after the write, observer notifications, and eventless/completion stabilization.
 	//   A committed update emits OnActionExecuted followed by OnTransition, with
-	//   this invoke's state as source and zero event/target values, before Always
+	//   this invoke's state as source and zero event/target values, before stabilization
 	//   notifications. No mailbox event is emitted. Callbacks run under the actor
 	//   lock on the caller's goroutine and inherit invoke context values without
 	//   cancellation. mutate must not be called from a lock-held actor callback.

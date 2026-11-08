@@ -104,7 +104,7 @@ func declareState[S ~string, E ~string, D Cloner[D]](
 
 	// Final atomic state: render as double-circle in the parent scope.
 	if def.Type == Final && !hasChildren {
-		newNode(root, parent, id, string(def.ID), mm.ShapeDoubleCircle)
+		newNode(root, parent, id, buildStateLabel(def, string(def.ID)), mm.ShapeDoubleCircle)
 		return
 	}
 
@@ -154,25 +154,12 @@ func newSubgraph(root *mm.Flowchart, parent *mm.Subgraph, id, label string) *mm.
 // buildStateLabel produces the visible label for an atomic state, embedding
 // entry/exit annotations when the state has Entry/Exit actions.
 func buildStateLabel[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D], defaultLabel string) string {
-	hasEntry := len(def.Entry) > 0
-	hasExit := len(def.Exit) > 0
-	if !hasEntry && !hasExit {
-		return defaultLabel
-	}
 	label := defaultLabel
-	if hasEntry {
-		ename := def.entryLabel
-		if ename == "" {
-			ename = "action"
-		}
-		label += "<br/>entry / " + ename
+	for i := range def.Entry {
+		label += "<br/>entry / " + actionDescription(actionLabelAt(def.entryLabels, i), "action")
 	}
-	if hasExit {
-		xname := def.exitLabel
-		if xname == "" {
-			xname = "action"
-		}
-		label += "<br/>exit / " + xname
+	for i := range def.Exit {
+		label += "<br/>exit / " + actionDescription(actionLabelAt(def.exitLabels, i), "action")
 	}
 	return label
 }
@@ -192,6 +179,11 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 	// than an unlabeled arrow that looks like any other connection.
 	for _, tr := range def.Always {
 		f.Edge(from, mermaidTarget(from, string(tr.Target)), transitionLabel("always", tr), mm.EdgeSolid)
+	}
+
+	// Local workflow completion is distinct from eventless routing and invoke completion.
+	for _, tr := range def.OnDone {
+		f.Edge(from, mermaidTarget(from, string(tr.Target)), transitionLabel("done", tr), mm.EdgeSolid)
 	}
 
 	// Delayed transitions.

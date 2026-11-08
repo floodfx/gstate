@@ -327,6 +327,37 @@ s.State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 })
 ```
 
+A compound state completes when its active **direct child** is Final. A parallel
+state completes when every declared region is complete. An ordinary compound
+ancestor does not complete merely because a nested workflow finished.
+
+Use the parent's `OnDone` to connect a reusable finite workflow to its caller:
+
+```go
+s.Initial("working")
+s.State("working", func(work *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+    work.Invoke(runWork, "finished", "failed")
+})
+s.State("finished", func(done *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+    done.Type(gstate.Final)
+})
+s.State("failed", func(failed *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+    failed.Type(gstate.Final)
+})
+s.OnDone().Guard(hasError).GoTo("error")
+s.OnDone().GoTo("next")
+```
+
+`OnDone` supports `Guard`, `Assign`, and their labels. Its source must be compound
+or parallel, its target must leave that source's subtree, and its last candidate
+must be unconditional. Completion does not imply success: guards inspect the
+outcome before exit reducers run; Assign runs after exit reducers. Eventless
+`Always` transitions settle before queued completion transitions. Both share the
+`ErrAlwaysLimit` transition budget. Completion dispatch waits until the entire
+selected parallel event batch has executed. Observers receive the normal
+transition with the source parent and zero event value; exports label it `done`.
+Hydration seeds restored final leaves without re-running their entry reducers.
+
 > **Try it:** [agent example](./examples/agent) — guards, always transitions, retries, and final states in a real workflow.
 
 ---
@@ -337,9 +368,21 @@ To prevent silent runtime errors (such as transitions to non-existent states due
 
 If a machine definition violates any structural rules, `Build()` will fail-fast by **panicking** with a clear, descriptive message prefixed with `gstate:`.
 
-`builder.BuildWithError()` returns `(*Machine, error)` with a nil machine on validation failure. `builder.Validate()` returns an error without returning a machine. Both check the same rules as `Build()`, compute hierarchy metadata, and run no actions, guards, or invokes. When several errors exist, the first reported error is unspecified. The builder can be corrected and checked again before actors use it.
+`builder.BuildWithError()` returns `(*Machine, error)` with a nil machine on validation failure. `builder.Validate()` returns an error without returning a machine. Both check the same rules as `Build()`, compute hierarchy metadata, and run no actions, guards, or invokes. When several errors exist, the first reported error is unspecified. Structural definitions can be corrected and checked again before actors use it. Recorded exclusive-write errors remain errors; rebuild the builder after fixing the conflicting plugins.
 
 These methods handle build-time validation errors. Empty or duplicate IDs still panic during `State(...)` declarations, and panics from user configuration callbacks propagate. `Build()` retains its existing signature and panics for invalid definitions.
+
+Repeated writes to `Initial`, `Invoke`, explicit `Type`, or explicit `History`
+are recorded as validation errors and preserve the previous configuration.
+Builder-inferred Compound type is not an explicit write. Use
+`ReplaceInitial(expectedChild, nextChild)` or
+`ReplaceInvoke(expectedLabel, handler, onDone, onError)` for intentional replacement.
+Invoke replacement requires a nonempty existing `InvokeLabel` matching the expected
+label. `InvokeLabel` requires a preceding invoke, a nonempty name, and no previous
+label on that service; replacement installs a new service that can receive a new label. `ReplaceOnDone(expectedTarget)` replaces a single unconditional default
+completion route; guarded alternatives require a final unconditional fallback.
+`Entry` and `Exit` remain additive. `EntryLabel` and `ExitLabel` name the latest
+corresponding action; use `EntryNamed` and `ExitNamed` to attach both at once.
 
 ### Validation Rules
 1. **Initial States**:
@@ -632,10 +675,10 @@ An actor whose machine transitions into a "done" top-level state stops itself au
 Auto-stop fires when the actor's top-level active state has reached "done" in the SCXML sense:
 
 - An atomic top-level state with `Type == Final`.
-- A compound top-level state whose active child chain reaches a Final (recursively).
-- A parallel top-level state whose every region has reached a Final (recursively).
+- A compound top-level state whose active direct child is Final, with no OnDone handler.
+- A parallel top-level state whose every region is locally complete, with no OnDone handler.
 
-The check is purely a property of the active set — nothing is propagated up the hierarchy. (Compound-parent `onDone` transitions, where reaching a child Final fires an `onDone` event on the parent, are a separate feature not yet implemented.)
+Local completion routes before actor termination. This changes the previous recursive compound auto-stop behavior: a nested Final leaves its enclosing session running unless an explicit completion route finishes the top-level workflow. Older snapshots that relied on recursive termination need corresponding parent completion routes.
 
 **Machines without any `Final` state never auto-stop.** Their actors run until the caller invokes `Stop()` explicitly. Auto-stop is opt-in by virtue of placing a `Final` state in your machine, not opt-out via configuration.
 

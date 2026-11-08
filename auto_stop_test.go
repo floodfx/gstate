@@ -87,9 +87,9 @@ func TestAutoStopOnCompoundRootReachingFinalChild(t *testing.T) {
 	}
 }
 
-// TestAutoStopOnNestedFinal covers a three-level deep compound:
-// root → running → complete(Final). Auto-stop recursion bubbles up.
-func TestAutoStopOnNestedFinal(t *testing.T) {
+// A finite child workflow does not complete a compound parent whose direct
+// active child is itself compound. Only local completion may stop the root.
+func TestNestedFinalKeepsOuterCompoundRunning(t *testing.T) {
 	m := New[StateID, EventID, Context]("nested_final").
 		Initial("root").
 		State("root", func(s *StateBuilder[StateID, EventID, Context]) {
@@ -106,13 +106,20 @@ func TestAutoStopOnNestedFinal(t *testing.T) {
 		}).
 		Build()
 
-	a := Start(m, Context{})
+	bar := newKindBarrier(KindEventDropped, 1)
+	a := Start(m, Context{}, m.WithObservers(bar))
 	defer a.Stop()
 
 	if err := a.SendCtx(context.Background(), "FINISH"); err != nil {
 		t.Fatalf("SendCtx err = %v, want nil", err)
 	}
-	<-a.stopped
+	if err := a.SendCtx(context.Background(), "STILL_RUNNING"); err != nil {
+		t.Fatalf("nested completion stopped outer compound: %v", err)
+	}
+	<-bar.done
+	if !a.Matches("complete") {
+		t.Fatalf("states = %v, want nested final active", a.States())
+	}
 }
 
 // TestAutoStopOnParallelAllRegionsDone covers a parallel top-level
