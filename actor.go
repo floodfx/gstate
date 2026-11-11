@@ -85,6 +85,15 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	eventReceivedObs   []EventReceivedObserver[S, E, D]
 	eventDroppedObs    []EventDroppedObserver[S, E, D]
 
+	// servicesActive reports whether background services (Invoke functions and
+	// After timers) are started on state entry. When false, entries are
+	// recorded in deferredServices and started later by [Actor.Activate].
+	servicesActive bool
+	// deferredServices maps active state IDs to the entry generation whose
+	// services were deferred while servicesActive was false. Stale entries
+	// (state exited or re-entered) are skipped on Activate.
+	deferredServices map[S]uint64
+
 	// sortedActive caches the result of getSortedActiveStatesLocked.
 	// Maintained strictly under the actor's write lock (a.mu.Lock()):
 	// invalidated whenever a.active is mutated and rebuilt under the write lock
@@ -108,6 +117,7 @@ type config[S ~string, E ~string, D Cloner[D]] struct {
 	actorID            ActorID
 	hydrateServices    bool
 	hydrateServicesSet bool
+	deferServices      bool
 }
 
 // Option configures an [Actor] at [Start] or [Hydrate] time. Options are
@@ -159,6 +169,25 @@ func (m *Machine[S, E, D]) WithHydrateServices(restart bool) Option[S, E, D] {
 	}
 }
 
+// WithServiceActivation returns an [Option] for [Start] and [Hydrate] that
+// controls whether the actor starts background services ([InvokeDef]
+// functions and After delayed-transition timers) as states are entered.
+// When omitted, services are active (true).
+//
+// Passing false creates the actor with services inactive: the actor still
+// enters states, runs entry/exit/transition actions, evaluates Always
+// transitions and processes events, but no Invoke goroutine is launched and
+// no After timer is armed. Call [Actor.Activate] to start the services of
+// every state that is active at that moment; states entered and exited before
+// Activate never start their services. After timers measure their delay from
+// the Activate call, not from the original state entry.
+//
+// On [Hydrate], states skipped by [Machine.WithHydrateServices](false) remain
+// skipped after Activate.
+func (m *Machine[S, E, D]) WithServiceActivation(enabled bool) Option[S, E, D] {
+	return func(c *config[S, E, D]) { c.deferServices = !enabled }
+}
+
 // Start creates and launches a new [Actor] for the given machine. Options are
 // applied in order; later values for the same option win. The returned Actor
 // is already running and ready to receive events via [Actor.Send] or
@@ -194,6 +223,9 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 		stopped:     make(chan struct{}),
 		done:        make(chan struct{}),
 		id:          cfg.actorID,
+
+		servicesActive:   !cfg.deferServices,
+		deferredServices: make(map[S]uint64),
 	}
 	a.installObservers(cfg.observers)
 
@@ -325,6 +357,9 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 		stopped:     make(chan struct{}),
 		done:        make(chan struct{}),
 		id:          id,
+
+		servicesActive:   !cfg.deferServices,
+		deferredServices: make(map[S]uint64),
 	}
 	a.installObservers(cfg.observers)
 
@@ -536,6 +571,7 @@ func (a *Actor[S, E, D]) initiateShutdownLocked() {
 			}
 		}
 		a.timers = make(map[S][]*time.Timer)
+		a.deferredServices = make(map[S]uint64)
 
 		// Signal shutdown. Senders parked in SendCtx's select wake on the
 		// stopped channel and return without delivering. The loop goroutine
@@ -697,6 +733,13 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 
 	gen := a.stateGens[id]
 
+	if !a.servicesActive {
+		if stateDef.Invoke != nil || len(stateDef.Delayed) > 0 {
+			a.deferredServices[id] = gen
+		}
+		return
+	}
+
 	// Start or restart invoked services
 	if stateDef.Invoke != nil {
 		invokeCtx, cancel := context.WithCancel(ctx)
@@ -788,6 +831,46 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 			a.executeInternalTransition(context.Background(), id, entryGen, trans)
 		})
 		a.timers[id] = append(a.timers[id], timer)
+	}
+}
+
+// Activate starts the background services (Invoke functions and After
+// timers) of every currently active state whose services were deferred by
+// [Machine.WithServiceActivation](false), in root-to-leaf order. From then on
+// services start normally on state entry. Activate is idempotent, safe to call
+// concurrently, and a no-op on an actor whose services are already active or
+// that has been stopped.
+//
+// Invoke functions started by Activate receive a context derived from
+// [context.Background], not the request context of the event that originally
+// entered the state.
+//
+// Do not call Activate synchronously from actor callbacks (actions, guards,
+// observers): it acquires the actor lock.
+func (a *Actor[S, E, D]) Activate() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	select {
+	case <-a.stopped:
+		return
+	default:
+	}
+	if a.servicesActive {
+		return
+	}
+	a.servicesActive = true
+
+	deferred := a.deferredServices
+	a.deferredServices = make(map[S]uint64)
+	sorted := a.getSortedActiveStatesLocked()
+	for i := len(sorted) - 1; i >= 0; i-- {
+		id := sorted[i]
+		gen, ok := deferred[id]
+		if !ok || !a.active[id] || a.stateGens[id] != gen {
+			continue
+		}
+		a.restartServices(context.Background(), id)
 	}
 }
 
@@ -1239,6 +1322,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 				}
 				delete(a.timers, sID)
 			}
+			delete(a.deferredServices, sID)
 			if stateDef.parent != "" {
 				a.history[stateDef.parent] = sID
 			}

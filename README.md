@@ -601,6 +601,13 @@ Available options:
 - `WithObservers(obs...)` — install one or more [observers](#13-observing-lifecycle-events). Variadic; pass any number of observers (each implementing whichever narrow callback interfaces it cares about). When omitted, no observer is installed and the engine skips payload construction entirely.
 - `WithActorID(id)` — override the auto-generated [`ActorID`](#actor-identity).
 - `WithHydrateServices(enabled)` — on `Hydrate`, controls whether restored active states automatically start their `Invoke` services and `After` delayed timers (defaults to `true`; pass `false` to inspect or resume a snapshot without re-triggering in-flight side effects).
+- `WithServiceActivation(enabled)` — on `Start` or `Hydrate`, controls whether `Invoke` services and `After` timers start as states are entered (defaults to `true`). Pass `false` to build the actor with services inactive: states, actions, `Always` and events behave normally, but no invoke goroutine or timer runs until you call `actor.Activate()`, which starts the services of the states active at that moment (After delays are measured from `Activate`). States exited before `Activate` never start their services. `Activate` is idempotent and a no-op after `Stop`.
+
+```go
+actor := gstate.Start(machine, MyData{}, machine.WithServiceActivation(false))
+// ... wire up dependencies, send setup events, inspect state ...
+actor.Activate() // now Invoke / After services start
+```
 
 ### Actor Identity
 
