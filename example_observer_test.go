@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/floodfx/gstate"
+	"github.com/blindson76/gstate"
 )
 
 type myState string

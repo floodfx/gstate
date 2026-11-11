@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/floodfx/gstate"
+	"github.com/blindson76/gstate"
 )
 
 // 1. Define types for State IDs, Event IDs, and Context.

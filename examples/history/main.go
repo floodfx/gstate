@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/floodfx/gstate"
+	"github.com/blindson76/gstate"
 )
 
 type MyState string

@@ -15,7 +15,7 @@ A Statechart is an extension of a Finite State Machine (FSM). While a basic FSM 
 ## Installation
 
 ```bash
-go get github.com/floodfx/gstate
+go get github.com/blindson76/gstate
 ```
 
 ---
@@ -771,7 +771,7 @@ actor := gstate.Hydrate(machine, loaded,
 
 ### Mermaid Diagrams
 
-[`ToMermaid`](https://pkg.go.dev/github.com/floodfx/gstate#ToMermaid) converts a machine to a [Mermaid flowchart](https://mermaid.js.org/syntax/flowchart.html) string. The output renders natively on GitHub, GitLab, and any Mermaid-compatible viewer.
+[`ToMermaid`](https://pkg.go.dev/github.com/blindson76/gstate#ToMermaid) converts a machine to a [Mermaid flowchart](https://mermaid.js.org/syntax/flowchart.html) string. The output renders natively on GitHub, GitLab, and any Mermaid-compatible viewer.
 
 ```go
 fmt.Println(gstate.ToMermaid(machine))
@@ -826,7 +826,7 @@ Invoke labels are Mermaid-only; SCXML export keeps the spec-prescribed `done.inv
 
 ### SCXML Export
 
-[`ToSCXMLString`](https://pkg.go.dev/github.com/floodfx/gstate#ToSCXMLString) converts a machine to a [W3C SCXML](https://www.w3.org/TR/scxml/) document. This is a descriptive export for inspection with SCXML tools. Go guards, actions and invokes are represented by labels and structural placeholders, not executable Go behavior. It does not promise executable SCXML round trips.
+[`ToSCXMLString`](https://pkg.go.dev/github.com/blindson76/gstate#ToSCXMLString) converts a machine to a [W3C SCXML](https://www.w3.org/TR/scxml/) document. This is a descriptive export for inspection with SCXML tools. Go guards, actions and invokes are represented by labels and structural placeholders, not executable Go behavior. It does not promise executable SCXML round trips.
 
 ```go
 xml, err := gstate.ToSCXMLString(machine)

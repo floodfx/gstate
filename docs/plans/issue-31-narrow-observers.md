@@ -638,15 +638,15 @@ Phase 4 — Verification + cleanup.
 
 ## Critical files
 
-- `/Users/donnie/go/src/github.com/floodfx/gstate/observer.go` — biggest
+- `/Users/donnie/go/src/github.com/blindson76/gstate/observer.go` — biggest
   surface: nine new interfaces, payload struct redesign, MultiObserver
   type change, all helper observer types updated.
-- `/Users/donnie/go/src/github.com/floodfx/gstate/actor.go` — Actor
+- `/Users/donnie/go/src/github.com/blindson76/gstate/actor.go` — Actor
   struct field, Start, Hydrate, install helpers, 12 callsites,
   `dataSnapshotPtr` removal.
-- `/Users/donnie/go/src/github.com/floodfx/gstate/bench_test.go` —
+- `/Users/donnie/go/src/github.com/blindson76/gstate/bench_test.go` —
   rename misleading benchmark, add two new benchmarks.
-- `/Users/donnie/go/src/github.com/floodfx/gstate/CHANGELOG.md` —
+- `/Users/donnie/go/src/github.com/blindson76/gstate/CHANGELOG.md` —
   breaking-change entry.
 - Every test file listed in step 4.6.
 

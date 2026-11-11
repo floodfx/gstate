@@ -30,7 +30,7 @@ func TestREADMEExamplesCompile(t *testing.T) {
 		t.Fatalf("missing README block %q", prefix)
 		return ""
 	}
-	imports := "package main\nimport(\"context\";\"fmt\";\"log\";\"github.com/floodfx/gstate\")\nvar _=context.Background\nvar _=fmt.Println\nvar _=log.Printf\nvar _=gstate.Atomic\n"
+	imports := "package main\nimport(\"context\";\"fmt\";\"log\";\"github.com/blindson76/gstate\")\nvar _=context.Background\nvar _=fmt.Println\nvar _=log.Printf\nvar _=gstate.Atomic\n"
 	types := "type MyState string\ntype MyEvent string\ntype MyData struct{Count int}\nfunc(d MyData) Clone() MyData{return d}\nconst EventGo MyEvent=\"GO\"\n"
 	machine := "machine:=gstate.New[MyState,MyEvent,MyData](\"docs\").Initial(\"idle\").State(\"idle\",func(*gstate.StateBuilder[MyState,MyEvent,MyData]){}).Build()\n"
 	quick := find("type MyState string")

@@ -1,4 +1,4 @@
-module github.com/floodfx/gstate
+module github.com/blindson76/gstate
 
 go 1.26.6
 
