@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/floodfx/gstate/compare/v0.3.2...v0.3.3) (2026-11-12)
+
+
+### Features
+
+* add atomic snapshot metadata capture ([#63](https://github.com/floodfx/gstate/issues/63)) ([9166b4a](https://github.com/floodfx/gstate/commit/9166b4abee495614e10faa4ba4d6626437cdef2f))
+
 ## [0.3.2](https://github.com/floodfx/gstate/compare/v0.3.1...v0.3.2) (2026-11-08)
 
 
