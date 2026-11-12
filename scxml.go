@@ -175,6 +175,8 @@ type SCXMLTransition struct {
 	Cond    string         `xml:"cond,attr,omitempty"`
 	Target  string         `xml:"target,attr,omitempty"`
 	Assign  []*SCXMLAssign `xml:"assign,omitempty"`
+	// Send holds events raised to the external system via TransitionBuilder.Raise.
+	Send []*SCXMLSend `xml:"send,omitempty"`
 }
 
 // SCXMLOnEntry wraps executable content on state entry.
@@ -287,6 +289,8 @@ type SCXMLAssign struct {
 type SCXMLSend struct {
 	Event string `xml:"event,attr,omitempty"`
 	Delay string `xml:"delay,attr,omitempty"`
+	// Target is the SCXML send target; raised events use "#_parent".
+	Target string `xml:"target,attr,omitempty"`
 }
 
 // ToSCXML converts a gstate Machine definition into an SCXML document.
@@ -452,6 +456,9 @@ func convertTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E,
 	}
 	if t.Action != nil {
 		tr.Assign = []*SCXMLAssign{{Location: t.actionName}}
+	}
+	for _, ev := range t.Raise {
+		tr.Send = append(tr.Send, &SCXMLSend{Event: string(ev), Target: "#_parent"})
 	}
 	return tr
 }

@@ -685,6 +685,24 @@ func (t *TransitionBuilder[S, E, D]) ActionLabel(name string) *TransitionBuilder
 	return t
 }
 
+// Raise appends an event delivered to the external system when the
+// transition fires. Repeated calls raise in declaration order. Raised events
+// are handed to the handler installed with [Machine.WithRaiseHandler] after
+// the transition commits and the actor lock is released; they are not
+// delivered to the actor's own mailbox. Without a handler, raises are no-ops.
+//
+// A raise-only transition needs no target, so it is complete without GoTo:
+//
+//	s.After(30 * time.Second).Raise(EventTimeout)
+//
+// Combine with GoTo to raise while transitioning:
+//
+//	s.On(EventSubmit).Raise(EventSubmitted).GoTo(StateReview)
+func (t *TransitionBuilder[S, E, D]) Raise(event E) *TransitionBuilder[S, E, D] {
+	t.def.Raise = append(t.def.Raise, event)
+	return t
+}
+
 // GoTo sets the target state for the transition.
 func (t *TransitionBuilder[S, E, D]) GoTo(target S) {
 	t.def.Target = target

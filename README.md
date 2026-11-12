@@ -301,6 +301,28 @@ s.State("loading", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
 })
 ```
 
+### Raising Events to an External System (`Raise`)
+`Raise` makes a transition emit an event to the outside world instead of the actor's own mailbox. A raise-only transition needs no target, so `s.After(d).Raise(event)` is a complete declaration; combine it with `GoTo` to raise while transitioning.
+
+```go
+machine := gstate.New[MyState, MyEvent, MyData]("session").
+    Initial("active").
+    State("active", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
+        s.After(30 * time.Second).Raise("session.idle")     // notify, stay in "active"
+        s.On("logout").Raise("session.closed").GoTo("done") // notify and transition
+    }).
+    State("done", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
+    Build()
+
+actor := gstate.Start(machine, MyData{},
+    machine.WithRaiseHandler(func(ctx context.Context, e gstate.RaisedEvent[MyState, MyEvent]) {
+        bus.Publish(string(e.Event)) // e.Source, e.Target, e.ActorID, e.Timestamp also available
+    }),
+)
+```
+
+Raises fire only when their transition fires (a failed guard raises nothing), in declaration order. They are delivered asynchronously, in commit order, from a dedicated goroutine that does not hold the actor lock, so the handler may read the actor or call `Send`. The handler receives the triggering context with cancellation removed. `Stop` waits for raises committed before shutdown to be delivered, so the handler must not call `Stop` synchronously. Without a handler, raises are no-ops.
+
 > **Try it:** [invoke example](./examples/invoke) — async services with cancellation. [delayed example](./examples/delayed) — automatic timeouts.
 
 ---
@@ -856,6 +878,7 @@ Also available:
 | Guards (with labels) | ✓ | ✓ (`cond`) |
 | Entry/exit actions (per-action labels) | ✓ (state header) | ✓ (`<onentry>` / `<onexit>` `<log>`) |
 | Delayed transitions | ✓ | ✓ (`<send>` + `_delay.<hex>.<index>`) |
+| Raised events (`Raise`) | ✓ (`/ raise <event>`) | ✓ (`<send target="#_parent">`) |
 | History (shallow/deep) | ✓ (notes) | ✓ (`<history>`) |
 | Invoke (onDone/onError) | ✓ | ✓ |
 | Action labels | ✓ | ✓ (`<assign>`) |

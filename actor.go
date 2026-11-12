@@ -99,6 +99,13 @@ type Actor[S ~string, E ~string, D Cloner[D]] struct {
 	// invalidated whenever a.active is mutated and rebuilt under the write lock
 	// so concurrent RLock readers in State() and States() never write to it.
 	sortedActive []S
+
+	// raiseHandler receives events raised by transitions; nil disables raises.
+	raiseHandler RaiseHandler[S, E]
+	// pendingRaises holds committed raises awaiting delivery; guarded by mu.
+	pendingRaises []pendingRaise[S, E]
+	// raiseSignal wakes the raise dispatcher goroutine.
+	raiseSignal chan struct{}
 }
 
 // envelope carries an event together with the request-scoped context and
@@ -118,6 +125,7 @@ type config[S ~string, E ~string, D Cloner[D]] struct {
 	hydrateServices    bool
 	hydrateServicesSet bool
 	deferServices      bool
+	raiseHandler       RaiseHandler[S, E]
 }
 
 // Option configures an [Actor] at [Start] or [Hydrate] time. Options are
@@ -226,8 +234,10 @@ func Start[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], initialData D
 
 		servicesActive:   !cfg.deferServices,
 		deferredServices: make(map[S]uint64),
+		raiseHandler:     cfg.raiseHandler,
 	}
 	a.installObservers(cfg.observers)
+	a.startRaiseDispatcher()
 
 	// Resolve all initial states (handling hierarchy and defaults)
 	a.mu.Lock()
@@ -360,8 +370,10 @@ func Hydrate[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], snapshot Sn
 
 		servicesActive:   !cfg.deferServices,
 		deferredServices: make(map[S]uint64),
+		raiseHandler:     cfg.raiseHandler,
 	}
 	a.installObservers(cfg.observers)
+	a.startRaiseDispatcher()
 
 	restartInitialServices := !cfg.hydrateServicesSet || cfg.hydrateServices
 
@@ -1276,6 +1288,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 				}
 			}
 		}
+		a.queueRaisesLocked(ctx, sourceID, t)
 		if len(a.transitionObs) > 0 {
 			e := a.newTransitionEvent(sourceID, "", event)
 			for _, o := range a.transitionObs {
@@ -1348,6 +1361,7 @@ func (a *Actor[S, E, D]) executeTransition(ctx context.Context, sourceID S, t *T
 			}
 		}
 	}
+	a.queueRaisesLocked(ctx, sourceID, t)
 
 	// Enter the explicit target path and initialize all unselected regions.
 	offset := 0

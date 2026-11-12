@@ -114,11 +114,34 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	Action func(D) D
 	// After is the delay before a timed transition fires.
 	After time.Duration
+	// Raise lists events delivered, in order, to the actor's raise handler
+	// (see [Machine.WithRaiseHandler]) when the transition fires. Raised
+	// events go to the external system; they are not sent to the actor's
+	// own mailbox.
+	Raise []E
 
 	// guardName is a human-readable label for the guard, used in SCXML export.
 	guardName string
 	// actionName is a human-readable label for the action, used in SCXML export.
 	actionName string
+}
+
+// RaisedEvent is the payload delivered to a raise handler installed with
+// [Machine.WithRaiseHandler] when a transition declared with
+// [TransitionBuilder.Raise] fires.
+type RaisedEvent[S ~string, E ~string] struct {
+	// MachineID identifies the machine definition.
+	MachineID string `json:"machine_id"`
+	// ActorID identifies the actor that raised the event.
+	ActorID ActorID `json:"actor_id"`
+	// Source is the state that owns the firing transition.
+	Source S `json:"source"`
+	// Target is the transition target, or zero for a targetless transition.
+	Target S `json:"target,omitempty"`
+	// Event is the raised event.
+	Event E `json:"event"`
+	// Timestamp is when the transition committed the raise.
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // InvokeDef defines an asynchronous service managed during a state's lifecycle.

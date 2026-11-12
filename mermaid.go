@@ -240,6 +240,12 @@ func transitionLabel[S ~string, E ~string, D Cloner[D]](event string, tr *Transi
 		}
 		label += " / " + name
 	}
+	for _, ev := range tr.Raise {
+		if label != "" {
+			label += " "
+		}
+		label += "/ raise " + string(ev)
+	}
 
 	return label
 }
