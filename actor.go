@@ -794,27 +794,34 @@ func (a *Actor[S, E, D]) restartServices(ctx context.Context, id S) {
 // Snapshot captures the current status of the Actor, including its active states,
 // history data, and data. The returned struct is suitable for JSON serialization.
 func (a *Actor[S, E, D]) Snapshot() Snapshot[S, D] {
+	return a.SnapshotWith(nil)
+}
+
+// SnapshotWith captures a snapshot and calls fn under the same actor read lock.
+// Actor state/data mutations and their synchronous transition/action observers
+// cannot interleave with capture and fn. Invoke-completion observers can run
+// concurrently. fn must be fast, must not perform I/O, and must not call Actor
+// methods. A nil fn is allowed. The lock is released even if fn panics.
+func (a *Actor[S, E, D]) SnapshotWith(fn func()) Snapshot[S, D] {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-
-	active := make([]S, 0, len(a.active))
-	for sID := range a.active {
-		active = append(active, sID)
+	active := a.sortedActive
+	if active == nil {
+		active = a.computeSortedActiveStates()
 	}
-
-	history := make(map[S]S)
+	ordered := make([]S, len(active))
+	for i, id := range active {
+		ordered[len(active)-1-i] = id
+	}
+	history := make(map[S]S, len(a.history))
 	for k, v := range a.history {
 		history[k] = v
 	}
-
-	ctx := a.data.Clone()
-
-	return Snapshot[S, D]{
-		Active:  active,
-		History: history,
-		Data:    ctx,
-		ActorID: a.id,
+	snap := Snapshot[S, D]{Active: ordered, History: history, Data: a.data.Clone(), ActorID: a.id}
+	if fn != nil {
+		fn()
 	}
+	return snap
 }
 
 // enterState handles the full entry logic for a state, including its children.

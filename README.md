@@ -663,6 +663,13 @@ data := actor.Data()
 snap := actor.Snapshot()
 ```
 
+`Snapshot.Active` uses the same root-to-leaf order as `States()`.
+Use `SnapshotWith(fn)` to capture external observer-maintained metadata while
+holding the same actor read lock as the snapshot. Keep `fn` fast; it must perform
+no I/O or actor method calls. Acquire any external mutex in actor-then-external
+order, as the corresponding synchronous observer does. Invoke-completion
+observers can still run concurrently.
+
 All read methods are thread-safe (protected by `RWMutex`).
 
 ### Stopping an Actor
