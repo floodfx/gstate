@@ -74,7 +74,8 @@ func TestGuardErr_EventSingleState(t *testing.T) {
 			State("idle", func(s *SB) {
 				s.Exit(appendErrTrail("exit"))
 				s.On("GO").
-					GuardErr(guardFn, "failed", recordGuardErr).
+					GuardErr(guardFn).
+					OnGuardErr("failed", recordGuardErr).
 					Assign(appendErrTrail("assign")).
 					GoTo("ok")
 				s.On("GO").GoTo("fallback")
@@ -164,7 +165,8 @@ func TestGuardErr_EventSingleState(t *testing.T) {
 			State("idle", func(s *SB) {
 				s.Exit(appendErrTrail("exit"))
 				s.On("GO").
-					GuardErr(func(errData) (bool, error) { return false, sentinel }, "step2", func(d errData, err error) errData {
+					GuardErr(func(errData) (bool, error) { return false, sentinel }).
+					OnGuardErr("step2", func(d errData, err error) errData {
 						d.Err = err.Error()
 						d.Trail = append(d.Trail, "record")
 						return d
@@ -174,7 +176,8 @@ func TestGuardErr_EventSingleState(t *testing.T) {
 			State("step2", func(s *SB) {
 				s.Entry(appendErrTrail("entry"))
 				s.On("NEXT").
-					GuardErr(func(errData) (bool, error) { return false, sentinel }, "failed", nil).
+					GuardErr(func(errData) (bool, error) { return false, sentinel }).
+					OnGuardErr("failed", nil).
 					GoTo("ok")
 			}).
 			State("ok", func(*SB) {}).
@@ -218,7 +221,8 @@ func TestGuardErr_ParallelErrorPreemptsOtherRegions(t *testing.T) {
 				r.Initial("b1")
 				r.State("b1", func(s *SB) {
 					s.On("GO").
-						GuardErr(func(errData) (bool, error) { return false, sentinel }, "failed", recordGuardErr).
+						GuardErr(func(errData) (bool, error) { return false, sentinel }).
+						OnGuardErr("failed", recordGuardErr).
 						GoTo("b2")
 				})
 				r.State("b2", func(s *SB) { s.Type(Final) })
@@ -278,7 +282,8 @@ func TestGuardErr_AlwaysChain(t *testing.T) {
 			}).
 			State("check2", func(s *SB) {
 				s.Always().
-					GuardErr(func(errData) (bool, error) { return false, sentinel }, "failed", recordGuardErr).
+					GuardErr(func(errData) (bool, error) { return false, sentinel }).
+					OnGuardErr("failed", recordGuardErr).
 					GoTo("ok")
 				s.Always().GoTo("fallback")
 			}).
@@ -316,12 +321,14 @@ func TestGuardErr_AlwaysChain(t *testing.T) {
 			}).
 			State("loopA", func(s *SB) {
 				s.Always().
-					GuardErr(func(errData) (bool, error) { return false, sentinel }, "loopB", recordGuardErr).
+					GuardErr(func(errData) (bool, error) { return false, sentinel }).
+					OnGuardErr("loopB", recordGuardErr).
 					GoTo("ok")
 			}).
 			State("loopB", func(s *SB) {
 				s.Always().
-					GuardErr(func(errData) (bool, error) { return false, sentinel }, "loopA", recordGuardErr).
+					GuardErr(func(errData) (bool, error) { return false, sentinel }).
+					OnGuardErr("loopA", recordGuardErr).
 					GoTo("ok")
 			}).
 			State("ok", func(*SB) {}).
@@ -354,7 +361,8 @@ func TestGuardErr_OnDone(t *testing.T) {
 				s.Type(Final)
 			})
 			w.OnDone().
-				GuardErr(func(errData) (bool, error) { return false, sentinel }, "failed", recordGuardErr).
+				GuardErr(func(errData) (bool, error) { return false, sentinel }).
+				OnGuardErr("failed", recordGuardErr).
 				GoTo("next")
 			w.OnDone().GoTo("success")
 		}).
@@ -394,7 +402,8 @@ func TestGuardErr_After(t *testing.T) {
 		Initial("waiting").
 		State("waiting", func(s *SB) {
 			s.After(time.Millisecond).
-				GuardErr(func(errData) (bool, error) { return false, sentinel }, "failed", recordGuardErr).
+				GuardErr(func(errData) (bool, error) { return false, sentinel }).
+				OnGuardErr("failed", recordGuardErr).
 				GoTo("ok")
 		}).
 		State("ok", func(*SB) {}).
@@ -423,7 +432,8 @@ func TestGuardErr_ObserverReportsError(t *testing.T) {
 		Initial("idle").
 		State("idle", func(s *SB) {
 			s.On("GO").
-				GuardErr(func(errData) (bool, error) { return true, sentinel }, "failed", recordGuardErr).
+				GuardErr(func(errData) (bool, error) { return true, sentinel }).
+				OnGuardErr("failed", recordGuardErr).
 				GoTo("ok")
 			s.On("PLAIN").
 				Guard(func(errData) bool { return true }).
@@ -520,7 +530,8 @@ func TestGuardErr_HydrateAndComposition(t *testing.T) {
 		mb.State("failed", func(*SB) {})
 		mb.Extend("work", func(w *SB) {
 			w.ReplaceOnDone("next").
-				GuardErr(func(errData) (bool, error) { return false, sentinel }, "failed", recordGuardErr).
+				GuardErr(func(errData) (bool, error) { return false, sentinel }).
+				OnGuardErr("failed", recordGuardErr).
 				GoTo("next")
 			w.OnDone().GoTo("next")
 		})
@@ -591,7 +602,8 @@ func TestGuardErr_ParallelRegionLocalErrorSettlesAndHydratesIdentically(t *testi
 					sub.Initial("check")
 					sub.State("check", func(s *SB) {
 						s.Always().
-							GuardErr(func(errData) (bool, error) { return false, sentinel }, "bFailed", recordGuardErr).
+							GuardErr(func(errData) (bool, error) { return false, sentinel }).
+							OnGuardErr("bFailed", recordGuardErr).
 							GoTo("b_done")
 					})
 				})
@@ -650,4 +662,114 @@ func TestGuardErr_ParallelRegionLocalErrorSettlesAndHydratesIdentically(t *testi
 	if a2.Data().Err != a.Data().Err || !slices.Equal(a2.Data().Trail, a.Data().Trail) {
 		t.Fatalf("hydrated Data() = %+v, live Data() = %+v", a2.Data(), a.Data())
 	}
+}
+
+func TestGuardErr_MachineDefault(t *testing.T) {
+	type SB = StateBuilder[StateID, EventID, errData]
+	sentinelEvent := errors.New("default event boom")
+	sentinelAlways := errors.New("default always boom")
+
+	m := New[StateID, EventID, errData]("guard-err-default").
+		DefaultGuardErr("failed", recordGuardErr).
+		Initial("idle").
+		State("idle", func(s *SB) {
+			s.On("GO").
+				GuardErr(func(errData) (bool, error) { return false, sentinelEvent }).
+				GoTo("ok")
+			s.On("STEP").GoTo("checking")
+		}).
+		State("checking", func(s *SB) {
+			s.Always().
+				GuardErr(func(errData) (bool, error) { return false, sentinelAlways }).
+				GoTo("ok")
+		}).
+		State("ok", func(*SB) {}).
+		State("failed", func(*SB) {}).
+		Build()
+
+	t.Run("event_guard_uses_default", func(t *testing.T) {
+		bar, done := newErrTransitionBarrier(1)
+		a := Start(m, errData{}, m.WithObservers(bar))
+		defer a.Stop()
+
+		a.Send("GO")
+		waitErrSignal(t, done)
+
+		if got := a.State(); got != "failed" {
+			t.Fatalf("State() = %q, want %q", got, "failed")
+		}
+		if got := a.Data().Err; got != sentinelEvent.Error() {
+			t.Fatalf("Data().Err = %q, want %q", got, sentinelEvent.Error())
+		}
+	})
+
+	t.Run("always_guard_uses_default", func(t *testing.T) {
+		bar, done := newErrTransitionBarrier(2)
+		a := Start(m, errData{}, m.WithObservers(bar))
+		defer a.Stop()
+
+		a.Send("STEP")
+		waitErrSignal(t, done)
+
+		if got := a.State(); got != "failed" {
+			t.Fatalf("State() = %q, want %q", got, "failed")
+		}
+		if got := a.Data().Err; got != sentinelAlways.Error() {
+			t.Fatalf("Data().Err = %q, want %q", got, sentinelAlways.Error())
+		}
+	})
+}
+
+func TestGuardErr_OverrideReplacesDefault(t *testing.T) {
+	type SB = StateBuilder[StateID, EventID, errData]
+	sentinel := errors.New("override guard boom")
+
+	m := New[StateID, EventID, errData]("guard-err-override").
+		DefaultGuardErr("failed", recordGuardErr).
+		Initial("idle").
+		State("idle", func(s *SB) {
+			s.On("OVERRIDE").
+				GuardErr(func(errData) (bool, error) { return false, sentinel }).
+				OnGuardErr("local", nil).
+				GoTo("ok")
+			s.On("DEFAULT").
+				GuardErr(func(errData) (bool, error) { return false, sentinel }).
+				GoTo("ok")
+		}).
+		State("local", func(*SB) {}).
+		State("ok", func(*SB) {}).
+		State("failed", func(*SB) {}).
+		Build()
+
+	t.Run("override_replaces_target_and_nil_record_does_not_inherit_default", func(t *testing.T) {
+		bar, done := newErrTransitionBarrier(1)
+		a := Start(m, errData{}, m.WithObservers(bar))
+		defer a.Stop()
+
+		a.Send("OVERRIDE")
+		waitErrSignal(t, done)
+
+		if got := a.State(); got != "local" {
+			t.Fatalf("State() = %q, want %q", got, "local")
+		}
+		if got := a.Data().Err; got != "" {
+			t.Fatalf("Data().Err = %q, want empty (nil record should not inherit default)", got)
+		}
+	})
+
+	t.Run("sibling_without_override_uses_default", func(t *testing.T) {
+		bar, done := newErrTransitionBarrier(1)
+		a := Start(m, errData{}, m.WithObservers(bar))
+		defer a.Stop()
+
+		a.Send("DEFAULT")
+		waitErrSignal(t, done)
+
+		if got := a.State(); got != "failed" {
+			t.Fatalf("State() = %q, want %q", got, "failed")
+		}
+		if got := a.Data().Err; got != sentinel.Error() {
+			t.Fatalf("Data().Err = %q, want %q", got, sentinel.Error())
+		}
+	})
 }

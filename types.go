@@ -54,8 +54,11 @@ type Machine[S ~string, E ~string, D Cloner[D]] struct {
 	// States is a flat map of every state (including nested) for O(1) lookup.
 	States map[S]*StateDef[S, E, D]
 
-	buildErrors []error
-	initialSet  bool
+	buildErrors           []error
+	initialSet            bool
+	defaultGuardErrTarget S
+	defaultGuardErrAction func(D, error) D
+	defaultGuardErrSet    bool
 }
 
 // StateDef defines the properties and behavior of a single state in the machine.
@@ -111,11 +114,15 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	// Guard is an optional predicate that must return true for the transition to fire.
 	Guard func(D) bool
 	// GuardErr is an optional fallible predicate; mutually exclusive with Guard.
-	// When it returns a non-nil error, the transition routes to GuardErrTarget instead.
+	// When it returns a non-nil error, the transition routes to its resolved error
+	// route: GuardErrTarget/GuardErrAction when set via OnGuardErr, otherwise the
+	// machine default set via MachineBuilder.DefaultGuardErr.
 	GuardErr func(D) (bool, error)
-	// GuardErrTarget is the state entered when GuardErr returns a non-nil error.
+	// GuardErrTarget is the per-transition state entered when GuardErr returns a
+	// non-nil error; overrides the machine default when set.
 	GuardErrTarget S
-	// GuardErrAction is an optional reducer that records a GuardErr error in place of Action.
+	// GuardErrAction is an optional per-transition reducer that records a GuardErr
+	// error in place of Action; overrides the machine default when set.
 	GuardErrAction func(D, error) D
 	// Action is a pure function that updates the data during the transition.
 	Action func(D) D
@@ -125,11 +132,43 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	// guardName is a human-readable label for the guard, used in SCXML export.
 	guardName string
 	// actionName is a human-readable label for the action, used in SCXML export.
-	actionName string
+	actionName       string
+	guardErrRouteSet bool
 }
 
 func (t *TransitionDef[S, E, D]) guarded() bool {
 	return t.Guard != nil || t.GuardErr != nil
+}
+
+func (t *TransitionDef[S, E, D]) guardLabel() string {
+	if t != nil && t.guardName != "" {
+		return t.guardName
+	}
+	return "guard"
+}
+
+func (t *TransitionDef[S, E, D]) hasOwnGuardErrRoute() bool {
+	return t.guardErrRouteSet || t.GuardErrTarget != "" || t.GuardErrAction != nil
+}
+
+func (m *Machine[S, E, D]) guardErrRoute(t *TransitionDef[S, E, D]) (target S, record func(D, error) D, ok bool) {
+	if t == nil {
+		return "", nil, false
+	}
+	if t.hasOwnGuardErrRoute() {
+		return t.GuardErrTarget, t.GuardErrAction, true
+	}
+	if m != nil && m.defaultGuardErrSet {
+		return m.defaultGuardErrTarget, m.defaultGuardErrAction, true
+	}
+	return "", nil, false
+}
+
+func guardErrRecordLabel[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E, D]) string {
+	if t != nil && t.guardName != "" {
+		return "record " + t.guardName + " error"
+	}
+	return "record error"
 }
 
 // InvokeDef defines an asynchronous service managed during a state's lifecycle.

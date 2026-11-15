@@ -3,6 +3,7 @@ package gstate
 import (
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -87,7 +88,7 @@ func ToMermaid[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], opts ...M
 
 	// Emit all transitions at the top level, in deterministic order.
 	walkStates(topLevel, func(s *StateDef[S, E, D]) {
-		emitTransitions(f, s)
+		emitTransitions(f, s, m)
 	})
 
 	return f.String()
@@ -164,13 +165,57 @@ func buildStateLabel[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D], 
 	return label
 }
 
-func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *StateDef[S, E, D]) {
+func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *StateDef[S, E, D], m *Machine[S, E, D]) {
 	from := mermaidID(string(def.ID))
+
+	type errEdgeKey struct {
+		target string
+		base   string
+	}
+	type errEdgeGroup struct {
+		key     errEdgeKey
+		guards  []string
+		records []string
+	}
+	var errGroups []*errEdgeGroup
+	errGroupByKey := make(map[errEdgeKey]*errEdgeGroup)
+
+	collectErrRoute := func(base string, tr *TransitionDef[S, E, D]) {
+		if tr == nil || tr.GuardErr == nil {
+			return
+		}
+		errTarget, record, ok := m.guardErrRoute(tr)
+		if !ok {
+			return
+		}
+		key := errEdgeKey{
+			target: mermaidTarget(from, string(errTarget)),
+			base:   base,
+		}
+		g, exists := errGroupByKey[key]
+		if !exists {
+			g = &errEdgeGroup{key: key}
+			errGroupByKey[key] = g
+			errGroups = append(errGroups, g)
+		}
+		gn := tr.guardLabel()
+		if !slices.Contains(g.guards, gn) {
+			g.guards = append(g.guards, gn)
+		}
+		if record != nil {
+			rl := guardErrRecordLabel(tr)
+			if !slices.Contains(g.records, rl) {
+				g.records = append(g.records, rl)
+			}
+		}
+	}
 
 	// Event-driven transitions, in declaration order.
 	for _, event := range def.eventOrder {
+		base := string(event)
 		for _, tr := range def.Transitions[event] {
-			emitTransitionEdge(f, from, string(event), tr)
+			emitTransitionEdge(f, from, base, tr)
+			collectErrRoute(base, tr)
 		}
 	}
 
@@ -179,16 +224,33 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 	// than an unlabeled arrow that looks like any other connection.
 	for _, tr := range def.Always {
 		emitTransitionEdge(f, from, "always", tr)
+		collectErrRoute("always", tr)
 	}
 
 	// Local workflow completion is distinct from eventless routing and invoke completion.
 	for _, tr := range def.OnDone {
 		emitTransitionEdge(f, from, "done", tr)
+		collectErrRoute("done", tr)
 	}
 
 	// Delayed transitions.
 	for _, tr := range def.Delayed {
-		emitTransitionEdge(f, from, fmt.Sprintf("after %s", formatDuration(tr.After)), tr)
+		base := fmt.Sprintf("after %s", formatDuration(tr.After))
+		emitTransitionEdge(f, from, base, tr)
+		collectErrRoute(base, tr)
+	}
+
+	// Fallible guard error routes, deduplicated per (error target, trigger label).
+	for _, g := range errGroups {
+		guards := strings.Join(g.guards, ", ")
+		errLabel := fmt.Sprintf("[%s] error", guards)
+		if g.key.base != "" {
+			errLabel = fmt.Sprintf("%s [%s] error", g.key.base, guards)
+		}
+		if len(g.records) > 0 {
+			errLabel += " / " + strings.Join(g.records, ", ")
+		}
+		f.Edge(from, g.key.target, errLabel, mm.EdgeDotted)
 	}
 
 	// Invoke: diamond pseudo-state when both OnDone and OnError are set;
@@ -222,30 +284,15 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 
 func emitTransitionEdge[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, from, base string, tr *TransitionDef[S, E, D]) {
 	f.Edge(from, mermaidTarget(from, string(tr.Target)), transitionLabel(base, tr), mm.EdgeSolid)
-	if tr.GuardErr != nil {
-		gn := "guard"
-		if tr.guardName != "" {
-			gn = tr.guardName
-		}
-		errLabel := fmt.Sprintf("[%s] error", gn)
-		if base != "" {
-			errLabel = fmt.Sprintf("%s [%s] error", base, gn)
-		}
-		f.Edge(from, mermaidTarget(from, string(tr.GuardErrTarget)), errLabel, mm.EdgeDotted)
-	}
 }
 
 func transitionLabel[S ~string, E ~string, D Cloner[D]](event string, tr *TransitionDef[S, E, D]) string {
 	label := event
 	if tr.guarded() {
-		gn := "guard"
-		if tr.guardName != "" {
-			gn = tr.guardName
-		}
 		if label != "" {
 			label += " "
 		}
-		label += fmt.Sprintf("[%s]", gn)
+		label += fmt.Sprintf("[%s]", tr.guardLabel())
 	}
 	if tr.Action != nil {
 		name := tr.actionName

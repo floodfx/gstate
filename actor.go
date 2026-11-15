@@ -1088,11 +1088,16 @@ func (a *Actor[S, E, D]) evalGuard(ctx context.Context, source S, event E, t *Tr
 		}
 	}
 	if err != nil {
+		target, record, _ := a.machine.guardErrRoute(t)
 		var action func(D) D
-		if record := t.GuardErrAction; record != nil {
+		if record != nil {
 			action = func(d D) D { return record(d, err) }
 		}
-		return &TransitionDef[S, E, D]{Target: t.GuardErrTarget, Action: action}, true
+		return &TransitionDef[S, E, D]{
+			Target:     target,
+			Action:     action,
+			actionName: guardErrRecordLabel(t),
+		}, true
 	}
 	if !ok {
 		return nil, false

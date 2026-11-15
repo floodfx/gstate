@@ -558,13 +558,14 @@ func TestMermaidGuardErr(t *testing.T) {
 		State("work", func(w *SB) {
 			w.Initial("step")
 			w.State("step", func(s *SB) {
-				s.On("GO").GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
-				s.On("UNLABELED").GuardErr(check, "failed", nil).GoTo("ok")
-				s.Always().GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
-				s.After(time.Millisecond).GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
+				s.On("GO").GuardErr(check).OnGuardErr("failed", record).GuardLabel("check").GoTo("ok")
+				s.On("UNLABELED").GuardErr(check).OnGuardErr("failed", nil).GoTo("ok")
+				s.On("ANON").GuardErr(check).OnGuardErr("failed", record).GoTo("ok")
+				s.Always().GuardErr(check).OnGuardErr("failed", record).GuardLabel("check").GoTo("ok")
+				s.After(time.Millisecond).GuardErr(check).OnGuardErr("failed", record).GuardLabel("check").GoTo("ok")
 			})
 			w.State("fin", func(s *SB) { s.Type(Final) })
-			w.OnDone().GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
+			w.OnDone().GuardErr(check).OnGuardErr("failed", record).GuardLabel("check").GoTo("ok")
 			w.OnDone().GoTo("ok")
 		}).
 		State("ok", func(*SB) {}).
@@ -573,15 +574,43 @@ func TestMermaidGuardErr(t *testing.T) {
 
 	got := ToMermaid(m)
 	assertContains(t, got, `step -->|"GO [check]"| ok`)
-	assertContains(t, got, `step -. "GO [check] error" .-> failed`)
+	assertContains(t, got, `step -. "GO [check] error / record check error" .-> failed`)
 	assertContains(t, got, `step -->|"UNLABELED [guard]"| ok`)
 	assertContains(t, got, `step -. "UNLABELED [guard] error" .-> failed`)
+	assertContains(t, got, `step -->|"ANON [guard]"| ok`)
+	assertContains(t, got, `step -. "ANON [guard] error / record error" .-> failed`)
 	assertContains(t, got, `step -->|"always [check]"| ok`)
-	assertContains(t, got, `step -. "always [check] error" .-> failed`)
+	assertContains(t, got, `step -. "always [check] error / record check error" .-> failed`)
 	assertContains(t, got, `step -->|"after 1ms [check]"| ok`)
-	assertContains(t, got, `step -. "after 1ms [check] error" .-> failed`)
+	assertContains(t, got, `step -. "after 1ms [check] error / record check error" .-> failed`)
 	assertContains(t, got, `work -->|"done [check]"| ok`)
-	assertContains(t, got, `work -. "done [check] error" .-> failed`)
+	assertContains(t, got, `work -. "done [check] error / record check error" .-> failed`)
+}
+
+func TestMermaidGuardErrDedup(t *testing.T) {
+	type SB = StateBuilder[StateID, EventID, Context]
+	check := func(Context) (bool, error) { return true, nil }
+	record := func(c Context, _ error) Context { return c }
+
+	m := New[StateID, EventID, Context]("guard_err_mermaid_dedup").
+		DefaultGuardErr("failed", record).
+		Initial("step").
+		State("step", func(s *SB) {
+			s.On("GO").GuardErr(check).GuardLabel("check1").GoTo("ok1")
+			s.On("GO").GuardErr(check).GuardLabel("check2").GoTo("ok2")
+			s.Always().GuardErr(check).GuardLabel("check3").GoTo("ok1")
+		}).
+		State("ok1", func(*SB) {}).
+		State("ok2", func(*SB) {}).
+		State("failed", func(*SB) {}).
+		Build()
+
+	got := ToMermaid(m)
+	assertContains(t, got, `step -. "GO [check1, check2] error / record check1 error, record check2 error" .-> failed`)
+	assertContains(t, got, `step -. "always [check3] error / record check3 error" .-> failed`)
+	if count := strings.Count(got, "step -. "); count != 2 {
+		t.Fatalf("expected 2 dotted edges from step, got %d:\n%s", count, got)
+	}
 }
 
 // --- helpers ---

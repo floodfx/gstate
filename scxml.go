@@ -3,7 +3,9 @@ package gstate
 import (
 	"encoding/xml"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -361,13 +363,17 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 		node.OnExit = &SCXMLOnExit{Logs: lifecycleDescriptions(len(def.Exit), def.exitLabels, "exit action")}
 	}
 
+	var errEntries []scxmlGuardErrEntry[S, E, D]
+
 	// Use eventOrder to preserve declaration order of transitions
 	for eventIdx, event := range def.eventOrder {
 		for i, t := range def.Transitions[event] {
 			node.Transitions = append(node.Transitions, convertTransition(t, string(event)))
 			if t.GuardErr != nil {
-				origin := fmt.Sprintf("on[%d.%d]:%s", eventIdx, i, event)
-				node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+				errEntries = append(errEntries, scxmlGuardErrEntry[S, E, D]{
+					t:      t,
+					origin: fmt.Sprintf("on[%d.%d]:%s", eventIdx, i, event),
+				})
 			}
 		}
 	}
@@ -375,16 +381,20 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 	for i, t := range def.Always {
 		node.Transitions = append(node.Transitions, convertTransition(t, ""))
 		if t.GuardErr != nil {
-			origin := fmt.Sprintf("always[%d]", i)
-			node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+			errEntries = append(errEntries, scxmlGuardErrEntry[S, E, D]{
+				t:      t,
+				origin: fmt.Sprintf("always[%d]", i),
+			})
 		}
 	}
 
 	for i, t := range def.OnDone {
 		node.Transitions = append(node.Transitions, convertTransition(t, "done.state."+string(def.ID)))
 		if t.GuardErr != nil {
-			origin := fmt.Sprintf("done[%d]", i)
-			node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+			errEntries = append(errEntries, scxmlGuardErrEntry[S, E, D]{
+				t:      t,
+				origin: fmt.Sprintf("done[%d]", i),
+			})
 		}
 	}
 
@@ -392,10 +402,14 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 		eventName := delayedEventID(def.ID, i)
 		node.Transitions = append(node.Transitions, convertTransition(t, eventName))
 		if t.GuardErr != nil {
-			origin := fmt.Sprintf("after[%d]", i)
-			node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+			errEntries = append(errEntries, scxmlGuardErrEntry[S, E, D]{
+				t:      t,
+				origin: fmt.Sprintf("after[%d]", i),
+			})
 		}
 	}
+
+	node.Transitions = append(node.Transitions, convertGuardErrTransitions(m, errEntries)...)
 
 	if def.Invoke != nil {
 		invokeID := string(def.ID)
@@ -460,11 +474,7 @@ func convertFinalNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 func convertTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E, D], event string) *SCXMLTransition {
 	tr := &SCXMLTransition{Event: event, Target: string(t.Target)}
 	if t.guarded() {
-		if t.guardName != "" {
-			tr.Cond = t.guardName
-		} else {
-			tr.Cond = "guard"
-		}
+		tr.Cond = t.guardLabel()
 	}
 	if t.Action != nil {
 		tr.Assign = []*SCXMLAssign{{Location: t.actionName}}
@@ -472,20 +482,63 @@ func convertTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E,
 	return tr
 }
 
-func convertGuardErrTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E, D], origin string) *SCXMLTransition {
-	gn := "guard"
-	if t.guardName != "" {
-		gn = t.guardName
+type scxmlGuardErrEntry[S ~string, E ~string, D Cloner[D]] struct {
+	t      *TransitionDef[S, E, D]
+	origin string
+}
+
+func convertGuardErrTransitions[S ~string, E ~string, D Cloner[D]](m *Machine[S, E, D], entries []scxmlGuardErrEntry[S, E, D]) []*SCXMLTransition {
+	if len(entries) == 0 {
+		return nil
 	}
-	tr := &SCXMLTransition{
-		Event:  "error.execution",
-		Cond:   fmt.Sprintf("guard.error(%s [%s])", origin, gn),
-		Target: string(t.GuardErrTarget),
+	type errGroup struct {
+		target  string
+		origins []string
+		assigns []string
 	}
-	if t.GuardErrAction != nil {
-		tr.Assign = []*SCXMLAssign{{Location: "guard.error"}}
+	var groups []*errGroup
+	groupByTarget := make(map[string]*errGroup)
+
+	for _, entry := range entries {
+		errTarget, record, ok := m.guardErrRoute(entry.t)
+		if !ok {
+			continue
+		}
+		tgt := string(errTarget)
+		g, exists := groupByTarget[tgt]
+		if !exists {
+			g = &errGroup{target: tgt}
+			groupByTarget[tgt] = g
+			groups = append(groups, g)
+		}
+		g.origins = append(g.origins, fmt.Sprintf("%s [%s]", entry.origin, entry.t.guardLabel()))
+		if record != nil {
+			rl := guardErrRecordLabel(entry.t)
+			if !slices.Contains(g.assigns, rl) {
+				g.assigns = append(g.assigns, rl)
+			}
+		}
 	}
-	return tr
+
+	multiTarget := len(groups) > 1
+	out := make([]*SCXMLTransition, 0, len(groups))
+	for _, g := range groups {
+		tr := &SCXMLTransition{
+			Event:  "error.execution",
+			Target: g.target,
+		}
+		if multiTarget {
+			tr.Cond = "guard.error(" + strings.Join(g.origins, ", ") + ")"
+		}
+		if len(g.assigns) > 0 {
+			tr.Assign = make([]*SCXMLAssign, len(g.assigns))
+			for i, loc := range g.assigns {
+				tr.Assign[i] = &SCXMLAssign{Location: loc}
+			}
+		}
+		out = append(out, tr)
+	}
+	return out
 }
 
 func sortedChildren[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D]) []*StateDef[S, E, D] {

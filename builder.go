@@ -49,6 +49,22 @@ func (m *MachineBuilder[S, E, D]) ReplaceInitial(expected, next S) *MachineBuild
 	return m
 }
 
+// DefaultGuardErr sets the machine-wide error route used by every
+// [TransitionBuilder.GuardErr] transition that does not declare its own route
+// via [TransitionBuilder.OnGuardErr]. record may be nil when no error reducer
+// is needed. Repeated assignments are recorded as validation errors and retain
+// the first route.
+func (m *MachineBuilder[S, E, D]) DefaultGuardErr(target S, record func(D, error) D) *MachineBuilder[S, E, D] {
+	if m.machine.defaultGuardErrSet {
+		m.machine.buildErrors = append(m.machine.buildErrors, fmt.Errorf("gstate: machine default guard error route already set to %q; cannot assign %q", m.machine.defaultGuardErrTarget, target))
+		return m
+	}
+	m.machine.defaultGuardErrTarget = target
+	m.machine.defaultGuardErrAction = record
+	m.machine.defaultGuardErrSet = true
+	return m
+}
+
 // State defines a top-level state in the machine.
 // The provided function is used to configure the state's behavior via a StateBuilder.
 func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *MachineBuilder[S, E, D] {
@@ -235,28 +251,25 @@ func (m *MachineBuilder[S, E, D]) validateStructure() error {
 func (m *MachineBuilder[S, E, D]) validateRegions() error {
 	for id, sd := range m.machine.States {
 		targets := []S{}
-		for _, ts := range sd.Transitions {
+		appendTransitionTargets := func(ts []*TransitionDef[S, E, D]) {
 			for _, t := range ts {
-				if t != nil {
-					targets = append(targets, t.Target, t.GuardErrTarget)
+				if t == nil {
+					continue
+				}
+				targets = append(targets, t.Target)
+				if t.GuardErr != nil {
+					if errTarget, _, ok := m.machine.guardErrRoute(t); ok {
+						targets = append(targets, errTarget)
+					}
 				}
 			}
 		}
-		for _, t := range sd.OnDone {
-			if t != nil {
-				targets = append(targets, t.Target, t.GuardErrTarget)
-			}
+		for _, ts := range sd.Transitions {
+			appendTransitionTargets(ts)
 		}
-		for _, t := range sd.Always {
-			if t != nil {
-				targets = append(targets, t.Target, t.GuardErrTarget)
-			}
-		}
-		for _, t := range sd.Delayed {
-			if t != nil {
-				targets = append(targets, t.Target, t.GuardErrTarget)
-			}
-		}
+		appendTransitionTargets(sd.OnDone)
+		appendTransitionTargets(sd.Always)
+		appendTransitionTargets(sd.Delayed)
 		if sd.Invoke != nil {
 			targets = append(targets, sd.Invoke.OnDone, sd.Invoke.OnError)
 		}
@@ -322,13 +335,14 @@ func (m *MachineBuilder[S, E, D]) validateCompletion() error {
 				}
 			}
 			if t.GuardErr != nil {
-				errTarget, exists := m.machine.States[t.GuardErrTarget]
+				errTargetID, _, _ := m.machine.guardErrRoute(t)
+				errTarget, exists := m.machine.States[errTargetID]
 				if !exists {
-					return fmt.Errorf("gstate: state %q OnDone GuardErr target %q does not exist", id, t.GuardErrTarget)
+					return fmt.Errorf("gstate: state %q OnDone GuardErr target %q does not exist", id, errTargetID)
 				}
 				for _, ancestor := range errTarget.path {
 					if ancestor == id {
-						return fmt.Errorf("gstate: state %q OnDone GuardErr target %q is inside its completed source subtree", id, t.GuardErrTarget)
+						return fmt.Errorf("gstate: state %q OnDone GuardErr target %q is inside its completed source subtree", id, errTargetID)
 					}
 				}
 			}
@@ -350,16 +364,22 @@ func (m *MachineBuilder[S, E, D]) validateGuardErr(id S, kind string, t *Transit
 	if t.Guard != nil && t.GuardErr != nil {
 		return fmt.Errorf("gstate: machine %q state %q has invalid %s: Guard and GuardErr cannot both be set", m.machine.ID, id, kind)
 	}
-	if t.GuardErr != nil && t.GuardErrTarget == "" {
-		return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardErr requires a non-empty error target", m.machine.ID, id, kind)
-	}
-	if t.GuardErr == nil && (t.GuardErrTarget != "" || t.GuardErrAction != nil) {
-		return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardErrTarget/GuardErrAction requires GuardErr", m.machine.ID, id, kind)
-	}
-	if t.GuardErrTarget != "" {
-		if _, ok := m.machine.States[t.GuardErrTarget]; !ok {
-			return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardErr target %q does not exist", m.machine.ID, id, kind, t.GuardErrTarget)
+	ownRoute := t.hasOwnGuardErrRoute()
+	if t.GuardErr == nil {
+		if ownRoute {
+			return fmt.Errorf("gstate: machine %q state %q has invalid %s: OnGuardErr requires GuardErr", m.machine.ID, id, kind)
 		}
+		return nil
+	}
+	if ownRoute && t.GuardErrTarget == "" {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: OnGuardErr requires a non-empty error target", m.machine.ID, id, kind)
+	}
+	errTarget, _, ok := m.machine.guardErrRoute(t)
+	if !ok || errTarget == "" {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardErr has no error route: set OnGuardErr or MachineBuilder.DefaultGuardErr", m.machine.ID, id, kind)
+	}
+	if _, exists := m.machine.States[errTarget]; !exists {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardErr target %q does not exist", m.machine.ID, id, kind, errTarget)
 	}
 	return nil
 }
@@ -371,6 +391,14 @@ func (m *MachineBuilder[S, E, D]) validate() error {
 	if m.machine.Initial != "" {
 		if _, ok := m.machine.States[m.machine.Initial]; !ok {
 			return fmt.Errorf("gstate: machine %q has invalid initial state: %q does not exist", m.machine.ID, m.machine.Initial)
+		}
+	}
+	if m.machine.defaultGuardErrSet {
+		if m.machine.defaultGuardErrTarget == "" {
+			return fmt.Errorf("gstate: machine %q DefaultGuardErr requires a non-empty target", m.machine.ID)
+		}
+		if _, ok := m.machine.States[m.machine.defaultGuardErrTarget]; !ok {
+			return fmt.Errorf("gstate: machine %q DefaultGuardErr target %q does not exist", m.machine.ID, m.machine.defaultGuardErrTarget)
 		}
 	}
 
@@ -718,17 +746,34 @@ func (t *TransitionBuilder[S, E, D]) Guard(fn func(D) bool) *TransitionBuilder[S
 // exclusive with [TransitionBuilder.Guard]; [TransitionBuilder.GuardLabel] names
 // either kind of guard for exports.
 //
+// Every GuardErr requires an error route resolved in order from
+// [TransitionBuilder.OnGuardErr] or [MachineBuilder.DefaultGuardErr]; omitting
+// both is a build-time validation error.
+//
 // When fn returns (true, nil), the transition fires normally; when it returns
 // (false, nil), evaluation moves on to the next candidate. When fn returns a
 // non-nil error, candidate selection stops immediately (dropping any candidates
 // selected in other parallel regions or later in an Always/OnDone list) and
-// routes via a synthesized external transition from the same source state to
-// onError: exit actions run, then record(data, err) runs in place of the
-// transition's own Assign (when record is non-nil), then onError is entered.
-func (t *TransitionBuilder[S, E, D]) GuardErr(fn func(D) (bool, error), onError S, record func(D, error) D) *TransitionBuilder[S, E, D] {
+// routes via a synthesized external transition from the same source state to the
+// resolved error target: exit actions run, then record(data, err) runs in place
+// of the transition's own Assign (when record is non-nil; Assign is skipped),
+// then the error target and its initial descendants are entered. Where the error
+// target sits in the hierarchy sets the blast radius (targeting outside an
+// enclosing Parallel exits all regions; targeting inside a region recovers locally).
+func (t *TransitionBuilder[S, E, D]) GuardErr(fn func(D) (bool, error)) *TransitionBuilder[S, E, D] {
 	t.def.GuardErr = fn
-	t.def.GuardErrTarget = onError
+	return t
+}
+
+// OnGuardErr sets the per-transition error route for a [TransitionBuilder.GuardErr]
+// guard, overriding any [MachineBuilder.DefaultGuardErr] route (both target and
+// record; a nil record means no record action runs). Requires GuardErr on the
+// same transition and a non-empty target. Repeated calls overwrite the previous
+// per-transition route.
+func (t *TransitionBuilder[S, E, D]) OnGuardErr(target S, record func(D, error) D) *TransitionBuilder[S, E, D] {
+	t.def.GuardErrTarget = target
 	t.def.GuardErrAction = record
+	t.def.guardErrRouteSet = true
 	return t
 }
 
