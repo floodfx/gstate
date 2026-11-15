@@ -42,21 +42,6 @@ func (a *Actor[S, E, D]) flushFinalEntries() {
 	}
 }
 
-func (a *Actor[S, E, D]) completionGuard(ctx context.Context, source S, t *TransitionDef[S, E, D]) bool {
-	if t.Guard == nil {
-		return true
-	}
-	ok := t.Guard(a.data)
-	if len(a.guardObs) > 0 {
-		var zero E
-		e := a.newGuardEvent(source, zero, t.Target, ok)
-		for _, o := range a.guardObs {
-			o.OnGuardEvaluated(ctx, e)
-		}
-	}
-	return ok
-}
-
 // stabilizeLocked settles eventless transitions before dispatching each queued
 // completion. All callers hold the actor lock and have finished their event batch.
 func (a *Actor[S, E, D]) stabilizeLocked(ctx context.Context) {
@@ -73,8 +58,8 @@ func (a *Actor[S, E, D]) stabilizeLocked(ctx context.Context) {
 				continue
 			}
 			for _, t := range sd.Always {
-				if a.completionGuard(ctx, id, t) {
-					source, selected = id, t
+				if route, _ := a.evalGuard(ctx, id, zero, t); route != nil {
+					source, selected = id, route
 					break
 				}
 			}
@@ -92,8 +77,8 @@ func (a *Actor[S, E, D]) stabilizeLocked(ctx context.Context) {
 				continue
 			}
 			for _, t := range a.machine.States[occurrence.state].OnDone {
-				if a.completionGuard(ctx, occurrence.state, t) {
-					source, selected = occurrence.state, t
+				if route, _ := a.evalGuard(ctx, occurrence.state, zero, t); route != nil {
+					source, selected = occurrence.state, route
 					break
 				}
 			}

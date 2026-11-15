@@ -32,6 +32,87 @@ func TestBuildWithErrorValidation(t *testing.T) {
 				s.State("b", func(*B) {})
 			})
 		}, "cross-region"},
+		{"guard-and-guarderr", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.On("GO").
+					Guard(func(Context) bool { return true }).
+					GuardErr(func(Context) (bool, error) { return true, nil }, "b", nil).
+					GoTo("b")
+			}).State("b", func(*B) {})
+		}, "Guard and GuardErr cannot both be set"},
+		{"guarderr-empty-target", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.On("GO").
+					GuardErr(func(Context) (bool, error) { return true, nil }, "", nil).
+					GoTo("b")
+			}).State("b", func(*B) {})
+		}, "GuardErr requires a non-empty error target"},
+		{"guarderr-without-fn", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.On("GO").GuardErr(nil, "b", nil).GoTo("b")
+			}).State("b", func(*B) {})
+		}, "GuardErrTarget/GuardErrAction requires GuardErr"},
+		{"guarderr-missing-target", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.On("GO").
+					GuardErr(func(Context) (bool, error) { return true, nil }, "missing", nil).
+					GoTo("b")
+			}).State("b", func(*B) {})
+		}, `GuardErr target "missing" does not exist`},
+		{"always-guarderr-missing-target", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.Always().
+					GuardErr(func(Context) (bool, error) { return true, nil }, "missing", nil).
+					GoTo("b")
+			}).State("b", func(*B) {})
+		}, `GuardErr target "missing" does not exist`},
+		{"delayed-guarderr-missing-target", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.After(0).
+					GuardErr(func(Context) (bool, error) { return true, nil }, "missing", nil).
+					GoTo("b")
+			}).State("b", func(*B) {})
+		}, `GuardErr target "missing" does not exist`},
+		{"ondone-guarderr-subtree", func(b *MB) {
+			b.Initial("w").State("w", func(w *B) {
+				w.Initial("done")
+				w.State("done", func(s *B) { s.Type(Final) })
+				w.OnDone().
+					GuardErr(func(Context) (bool, error) { return true, nil }, "done", nil).
+					GoTo("next")
+				w.OnDone().GoTo("next")
+			}).State("next", func(*B) {})
+		}, "inside its completed source subtree"},
+		{"ondone-guarderr-no-fallback", func(b *MB) {
+			b.Initial("w").State("w", func(w *B) {
+				w.Initial("done")
+				w.State("done", func(s *B) { s.Type(Final) })
+				w.OnDone().
+					GuardErr(func(Context) (bool, error) { return true, nil }, "failed", nil).
+					GoTo("next")
+			}).State("next", func(*B) {}).State("failed", func(*B) {})
+		}, "unconditional fallback"},
+		{"cross-region-guarderr", func(b *MB) {
+			b.Initial("p").State("p", func(s *B) {
+				s.Type(Parallel)
+				s.State("a", func(s *B) {
+					s.On("GO").
+						GuardErr(func(Context) (bool, error) { return true, nil }, "b", nil).
+						GoTo("a")
+				})
+				s.State("b", func(*B) {})
+			})
+		}, "cross-region"},
+		{"replace-ondone-guarderr", func(b *MB) {
+			b.Initial("w").State("w", func(w *B) {
+				w.Initial("done")
+				w.State("done", func(s *B) { s.Type(Final) })
+				w.OnDone().
+					GuardErr(func(Context) (bool, error) { return true, nil }, "failed", nil).
+					GoTo("next")
+				w.ReplaceOnDone("next").GoTo("failed")
+			}).State("next", func(*B) {}).State("failed", func(*B) {})
+		}, "OnDone replacement requires one unconditional route"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

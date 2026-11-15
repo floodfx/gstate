@@ -110,6 +110,13 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	Target S
 	// Guard is an optional predicate that must return true for the transition to fire.
 	Guard func(D) bool
+	// GuardErr is an optional fallible predicate; mutually exclusive with Guard.
+	// When it returns a non-nil error, the transition routes to GuardErrTarget instead.
+	GuardErr func(D) (bool, error)
+	// GuardErrTarget is the state entered when GuardErr returns a non-nil error.
+	GuardErrTarget S
+	// GuardErrAction is an optional reducer that records a GuardErr error in place of Action.
+	GuardErrAction func(D, error) D
 	// Action is a pure function that updates the data during the transition.
 	Action func(D) D
 	// After is the delay before a timed transition fires.
@@ -119,6 +126,10 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	guardName string
 	// actionName is a human-readable label for the action, used in SCXML export.
 	actionName string
+}
+
+func (t *TransitionDef[S, E, D]) guarded() bool {
+	return t.Guard != nil || t.GuardErr != nil
 }
 
 // InvokeDef defines an asynchronous service managed during a state's lifecycle.

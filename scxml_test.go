@@ -1541,3 +1541,121 @@ func TestSCXMLNoSpuriousAttributes(t *testing.T) {
 		t.Errorf("expected at most 1 xmlns declaration, got %d", occurrences)
 	}
 }
+
+func TestSCXMLGuardErr(t *testing.T) {
+	type SB = StateBuilder[StateID, EventID, Context]
+	check := func(Context) (bool, error) { return true, nil }
+	record := func(c Context, _ error) Context { return c }
+
+	m := New[StateID, EventID, Context]("guard_err_scxml").
+		Initial("work").
+		State("work", func(w *SB) {
+			w.Initial("step")
+			w.State("step", func(s *SB) {
+				s.On("GO").GuardErr(check, "failedGO", record).GuardLabel("check").GoTo("ok")
+				s.On("NEXT").GuardErr(check, "failedNEXT", record).GuardLabel("check").GoTo("ok")
+				s.On("NOREG").GuardErr(check, "failedNOREG", nil).GoTo("ok")
+				s.Always().GuardErr(check, "failedAlways", record).GuardLabel("check").GoTo("ok")
+				s.After(time.Millisecond).GuardErr(check, "failedAfter", record).GuardLabel("check").GoTo("ok")
+			})
+			w.State("fin", func(s *SB) { s.Type(Final) })
+			w.OnDone().GuardErr(check, "failedDone", record).GuardLabel("check").GoTo("ok")
+			w.OnDone().GoTo("ok")
+		}).
+		State("ok", func(*SB) {}).
+		State("failedGO", func(*SB) {}).
+		State("failedNEXT", func(*SB) {}).
+		State("failedNOREG", func(*SB) {}).
+		State("failedAlways", func(*SB) {}).
+		State("failedAfter", func(*SB) {}).
+		State("failedDone", func(*SB) {}).
+		Build()
+
+	raw, err := ToSCXMLString(m)
+	if err != nil {
+		t.Fatalf("ToSCXMLString: %v", err)
+	}
+	doc := mustParseSCXML(t, raw)
+
+	step := nodeByID(doc.Children, "step")
+	if step == nil {
+		t.Fatal("step state not found")
+	}
+	// Expected transitions on step:
+	// [0] GO cond=check -> ok
+	// [1] error.execution cond=guard.error(on[0.0]:GO [check]) -> failedGO (assign guard.error)
+	// [2] NEXT cond=check -> ok
+	// [3] error.execution cond=guard.error(on[1.0]:NEXT [check]) -> failedNEXT (assign guard.error)
+	// [4] NOREG cond=guard -> ok
+	// [5] error.execution cond=guard.error(on[2.0]:NOREG [guard]) -> failedNOREG (no assign)
+	// [6] "" (Always) cond=check -> ok
+	// [7] error.execution cond=guard.error(always[0] [check]) -> failedAlways (assign guard.error)
+	// [8] _delay... cond=check -> ok
+	// [9] error.execution cond=guard.error(after[0] [check]) -> failedAfter (assign guard.error)
+	if len(step.Transitions) != 10 {
+		t.Fatalf("len(step.Transitions) = %d, want 10", len(step.Transitions))
+	}
+
+	wantStepErr := []struct {
+		idx        int
+		cond       string
+		target     string
+		wantAssign bool
+	}{
+		{1, "guard.error(on[0.0]:GO [check])", "failedGO", true},
+		{3, "guard.error(on[1.0]:NEXT [check])", "failedNEXT", true},
+		{5, "guard.error(on[2.0]:NOREG [guard])", "failedNOREG", false},
+		{7, "guard.error(always[0] [check])", "failedAlways", true},
+		{9, "guard.error(after[0] [check])", "failedAfter", true},
+	}
+	seenConds := make(map[string]bool)
+	for _, want := range wantStepErr {
+		tr := step.Transitions[want.idx]
+		if tr.Event != "error.execution" || tr.Cond != want.cond || tr.Target != want.target {
+			t.Fatalf("step.Transitions[%d] = %+v, want event=error.execution cond=%q target=%q", want.idx, tr, want.cond, want.target)
+		}
+		if seenConds[tr.Cond] {
+			t.Fatalf("duplicate error.execution cond %q", tr.Cond)
+		}
+		seenConds[tr.Cond] = true
+		if want.wantAssign {
+			if len(tr.Assign) != 1 || tr.Assign[0].Location != "guard.error" {
+				t.Fatalf("step.Transitions[%d] assign = %+v, want location=guard.error", want.idx, tr.Assign)
+			}
+		} else if len(tr.Assign) != 0 {
+			t.Fatalf("step.Transitions[%d] assign = %+v, want none", want.idx, tr.Assign)
+		}
+	}
+	if tr := step.Transitions[0]; tr.Event != "GO" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[0] = %+v, want GO cond=check target=ok", tr)
+	}
+	if tr := step.Transitions[2]; tr.Event != "NEXT" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[2] = %+v, want NEXT cond=check target=ok", tr)
+	}
+	if tr := step.Transitions[4]; tr.Event != "NOREG" || tr.Cond != "guard" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[4] = %+v, want NOREG cond=guard target=ok", tr)
+	}
+	if tr := step.Transitions[6]; tr.Event != "" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[6] = %+v, want Always cond=check target=ok", tr)
+	}
+	if tr := step.Transitions[8]; !strings.HasPrefix(tr.Event, "_delay.") || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[8] = %+v, want delayed cond=check target=ok", tr)
+	}
+
+	work := nodeByID(doc.Children, "work")
+	if work == nil {
+		t.Fatal("work state not found")
+	}
+	// [0] done.state.work cond=check -> ok
+	// [1] error.execution cond=guard.error(done[0] [check]) -> failedDone (assign guard.error)
+	// [2] done.state.work -> ok
+	if len(work.Transitions) != 3 {
+		t.Fatalf("len(work.Transitions) = %d, want 3", len(work.Transitions))
+	}
+	if tr := work.Transitions[0]; tr.Event != "done.state.work" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("work.Transitions[0] = %+v", tr)
+	}
+	if tr := work.Transitions[1]; tr.Event != "error.execution" || tr.Cond != "guard.error(done[0] [check])" || tr.Target != "failedDone" || len(tr.Assign) != 1 || tr.Assign[0].Location != "guard.error" {
+		t.Fatalf("work.Transitions[1] = %+v", tr)
+	}
+}

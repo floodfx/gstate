@@ -362,23 +362,39 @@ func convertStateNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 	}
 
 	// Use eventOrder to preserve declaration order of transitions
-	for _, event := range def.eventOrder {
-		for _, t := range def.Transitions[event] {
+	for eventIdx, event := range def.eventOrder {
+		for i, t := range def.Transitions[event] {
 			node.Transitions = append(node.Transitions, convertTransition(t, string(event)))
+			if t.GuardErr != nil {
+				origin := fmt.Sprintf("on[%d.%d]:%s", eventIdx, i, event)
+				node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+			}
 		}
 	}
 
-	for _, t := range def.Always {
+	for i, t := range def.Always {
 		node.Transitions = append(node.Transitions, convertTransition(t, ""))
+		if t.GuardErr != nil {
+			origin := fmt.Sprintf("always[%d]", i)
+			node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+		}
 	}
 
-	for _, t := range def.OnDone {
+	for i, t := range def.OnDone {
 		node.Transitions = append(node.Transitions, convertTransition(t, "done.state."+string(def.ID)))
+		if t.GuardErr != nil {
+			origin := fmt.Sprintf("done[%d]", i)
+			node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+		}
 	}
 
 	for i, t := range def.Delayed {
 		eventName := delayedEventID(def.ID, i)
 		node.Transitions = append(node.Transitions, convertTransition(t, eventName))
+		if t.GuardErr != nil {
+			origin := fmt.Sprintf("after[%d]", i)
+			node.Transitions = append(node.Transitions, convertGuardErrTransition(t, origin))
+		}
 	}
 
 	if def.Invoke != nil {
@@ -443,7 +459,7 @@ func convertFinalNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 
 func convertTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E, D], event string) *SCXMLTransition {
 	tr := &SCXMLTransition{Event: event, Target: string(t.Target)}
-	if t.Guard != nil {
+	if t.guarded() {
 		if t.guardName != "" {
 			tr.Cond = t.guardName
 		} else {
@@ -452,6 +468,22 @@ func convertTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E,
 	}
 	if t.Action != nil {
 		tr.Assign = []*SCXMLAssign{{Location: t.actionName}}
+	}
+	return tr
+}
+
+func convertGuardErrTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E, D], origin string) *SCXMLTransition {
+	gn := "guard"
+	if t.guardName != "" {
+		gn = t.guardName
+	}
+	tr := &SCXMLTransition{
+		Event:  "error.execution",
+		Cond:   fmt.Sprintf("guard.error(%s [%s])", origin, gn),
+		Target: string(t.GuardErrTarget),
+	}
+	if t.GuardErrAction != nil {
+		tr.Assign = []*SCXMLAssign{{Location: "guard.error"}}
 	}
 	return tr
 }

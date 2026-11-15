@@ -548,6 +548,42 @@ func TestMermaidNoCustomCSS(t *testing.T) {
 	assertContains(t, got, "invoke.error")
 }
 
+func TestMermaidGuardErr(t *testing.T) {
+	type SB = StateBuilder[StateID, EventID, Context]
+	check := func(Context) (bool, error) { return true, nil }
+	record := func(c Context, _ error) Context { return c }
+
+	m := New[StateID, EventID, Context]("guard_err_mermaid").
+		Initial("work").
+		State("work", func(w *SB) {
+			w.Initial("step")
+			w.State("step", func(s *SB) {
+				s.On("GO").GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
+				s.On("UNLABELED").GuardErr(check, "failed", nil).GoTo("ok")
+				s.Always().GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
+				s.After(time.Millisecond).GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
+			})
+			w.State("fin", func(s *SB) { s.Type(Final) })
+			w.OnDone().GuardErr(check, "failed", record).GuardLabel("check").GoTo("ok")
+			w.OnDone().GoTo("ok")
+		}).
+		State("ok", func(*SB) {}).
+		State("failed", func(*SB) {}).
+		Build()
+
+	got := ToMermaid(m)
+	assertContains(t, got, `step -->|"GO [check]"| ok`)
+	assertContains(t, got, `step -. "GO [check] error" .-> failed`)
+	assertContains(t, got, `step -->|"UNLABELED [guard]"| ok`)
+	assertContains(t, got, `step -. "UNLABELED [guard] error" .-> failed`)
+	assertContains(t, got, `step -->|"always [check]"| ok`)
+	assertContains(t, got, `step -. "always [check] error" .-> failed`)
+	assertContains(t, got, `step -->|"after 1ms [check]"| ok`)
+	assertContains(t, got, `step -. "after 1ms [check] error" .-> failed`)
+	assertContains(t, got, `work -->|"done [check]"| ok`)
+	assertContains(t, got, `work -. "done [check] error" .-> failed`)
+}
+
 // --- helpers ---
 
 func assertContains(t *testing.T, got, want string) {

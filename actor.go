@@ -411,7 +411,7 @@ func (a *Actor[S, E, D]) newTransitionEvent(from, to S, event E) *TransitionEven
 	return e
 }
 
-func (a *Actor[S, E, D]) newGuardEvent(state S, event E, target S, result bool) *GuardEvent[S, E, D] {
+func (a *Actor[S, E, D]) newGuardEvent(state S, event E, target S, result bool, err error) *GuardEvent[S, E, D] {
 	e := &GuardEvent[S, E, D]{
 		MachineID: a.machine.ID,
 		ActorID:   a.id,
@@ -419,6 +419,7 @@ func (a *Actor[S, E, D]) newGuardEvent(state S, event E, target S, result bool) 
 		Event:     event,
 		Target:    target,
 		Result:    result,
+		Err:       err,
 		Timestamp: time.Now(),
 		data:      a.data,
 	}
@@ -1066,6 +1067,39 @@ type eventTransition[S ~string, E ~string, D Cloner[D]] struct {
 	exits      map[S]bool
 }
 
+func (a *Actor[S, E, D]) evalGuard(ctx context.Context, source S, event E, t *TransitionDef[S, E, D]) (route *TransitionDef[S, E, D], errored bool) {
+	if !t.guarded() {
+		return t, false
+	}
+	var ok bool
+	var err error
+	if t.GuardErr != nil {
+		ok, err = t.GuardErr(a.data)
+		if err != nil {
+			ok = false
+		}
+	} else {
+		ok = t.Guard(a.data)
+	}
+	if len(a.guardObs) > 0 {
+		e := a.newGuardEvent(source, event, t.Target, ok, err)
+		for _, o := range a.guardObs {
+			o.OnGuardEvaluated(ctx, e)
+		}
+	}
+	if err != nil {
+		var action func(D) D
+		if record := t.GuardErrAction; record != nil {
+			action = func(d D) D { return record(d, err) }
+		}
+		return &TransitionDef[S, E, D]{Target: t.GuardErrTarget, Action: action}, true
+	}
+	if !ok {
+		return nil, false
+	}
+	return t, false
+}
+
 func (a *Actor[S, E, D]) selectTransitions(ctx context.Context, event E) []eventTransition[S, E, D] {
 	states := slices.Clone(a.getSortedActiveStatesLocked())
 	slices.SortFunc(states, func(x, y S) int {
@@ -1093,19 +1127,14 @@ func (a *Actor[S, E, D]) selectTransitions(ctx context.Context, event E) []event
 			continue
 		}
 		for _, t := range a.machine.States[id].Transitions[event] {
-			if t.Guard != nil {
-				ok := t.Guard(a.data)
-				if len(a.guardObs) > 0 {
-					e := a.newGuardEvent(id, event, t.Target, ok)
-					for _, o := range a.guardObs {
-						o.OnGuardEvaluated(ctx, e)
-					}
-				}
-				if !ok {
-					continue
-				}
+			route, errored := a.evalGuard(ctx, id, event, t)
+			if errored {
+				return []eventTransition[S, E, D]{{id, route, a.transitionExits(id, route.Target)}}
 			}
-			exits := a.transitionExits(id, t.Target)
+			if route == nil {
+				continue
+			}
+			exits := a.transitionExits(id, route.Target)
 			conflict := false
 			for _, c := range selected {
 				if exits[c.source] || c.exits[id] {
@@ -1123,7 +1152,7 @@ func (a *Actor[S, E, D]) selectTransitions(ctx context.Context, event E) []event
 				}
 			}
 			if !conflict {
-				selected = append(selected, eventTransition[S, E, D]{id, t, exits})
+				selected = append(selected, eventTransition[S, E, D]{id, route, exits})
 			}
 			break
 		}
@@ -1333,20 +1362,12 @@ func (a *Actor[S, E, D]) executeInternalTransition(ctx context.Context, sourceID
 	}
 
 	var zero E
-	if t.Guard != nil {
-		ok := t.Guard(a.data)
-		if len(a.guardObs) > 0 {
-			e := a.newGuardEvent(sourceID, zero, t.Target, ok)
-			for _, o := range a.guardObs {
-				o.OnGuardEvaluated(ctx, e)
-			}
-		}
-		if !ok {
-			return
-		}
+	route, _ := a.evalGuard(ctx, sourceID, zero, t)
+	if route == nil {
+		return
 	}
 
-	a.executeTransition(ctx, sourceID, t, zero)
+	a.executeTransition(ctx, sourceID, route, zero)
 	a.stabilizeLocked(ctx)
 	a.getSortedActiveStatesLocked()
 	a.checkAndInitiateAutoStopLocked()
