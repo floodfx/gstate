@@ -247,8 +247,13 @@ func emitTransitions[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, def *St
 		if g.key.base != "" {
 			errLabel = fmt.Sprintf("%s [%s] error", g.key.base, guards)
 		}
-		if len(g.records) > 0 {
-			errLabel += " / " + strings.Join(g.records, ", ")
+		switch {
+		case len(g.records) == 0:
+		case len(g.guards) == 1:
+			errLabel += " / " + g.records[0]
+		default:
+			// Several guards share this edge; one generic record label keeps it short.
+			errLabel += " / record error"
 		}
 		f.Edge(from, g.key.target, errLabel, mm.EdgeDotted)
 	}

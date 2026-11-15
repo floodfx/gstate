@@ -606,7 +606,7 @@ func TestMermaidGuardErrDedup(t *testing.T) {
 		Build()
 
 	got := ToMermaid(m)
-	assertContains(t, got, `step -. "GO [check1, check2] error / record check1 error, record check2 error" .-> failed`)
+	assertContains(t, got, `step -. "GO [check1, check2] error / record error" .-> failed`)
 	assertContains(t, got, `step -. "always [check3] error / record check3 error" .-> failed`)
 	if count := strings.Count(got, "step -. "); count != 2 {
 		t.Fatalf("expected 2 dotted edges from step, got %d:\n%s", count, got)
