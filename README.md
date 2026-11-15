@@ -319,172 +319,40 @@ s.State("check_balance", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) 
 })
 ```
 
-### Fallible Guards (`GuardErr`)
+---
 
-#### When to use `Guard` vs `GuardErr`
+## 10. Fallible Guards (`GuardErr`)
 
-Use `Guard(func(D) bool)` for pure, in-memory predicates over `D` that cannot fail. When a guard evaluates untrusted, scripted, remote, or otherwise fallible logic (such as a CEL/Rego policy expression, user-supplied script, or dynamic schema check), use `GuardErr(func(D) (bool, error))` so an evaluation failure routes explicitly to an error state instead of masquerading as `false` and silently falling through to the next candidate.
+Use `Guard(func(D) bool)` for predicates that cannot fail. When a guard runs logic that can fail (a script, a policy expression, a remote check), use `GuardErr(func(D) (bool, error))`. A failure then routes to an error state instead of masquerading as `false`. `(true, nil)` and `(false, nil)` behave exactly like `Guard`.
 
-When `GuardErr` returns `(true, nil)` or `(false, nil)`, it behaves identically to `Guard`: `(true, nil)` fires the transition and `(false, nil)` advances to the next candidate.
-
-#### Step order on the error route
-
-When `GuardErr` returns a non-nil `err`, `gstate` replaces the transition with a synthesized external transition from the same source state to the resolved error target (`OnGuardErr`, or `MachineBuilder.DefaultGuardErr`):
-
-1. **Guard errors**: `fn(data)` returns a non-nil `err` (installed `GuardObserver`s receive `GuardEvent` with `Result: false` and `Err: err`).
-2. **Selection stops**: candidate selection halts immediately for the current step — any transitions already picked in earlier parallel regions are dropped, and no later `On`, `Always`, or `OnDone` candidates or fallbacks are evaluated.
-3. **Exit actions run**: the source state's `Exit` actions run (from deepest active leaf up to the LCA with the error target), exactly as for any external transition leaving the state.
-4. **`record` runs (`Assign` skipped)**: `record(data, err)` updates `D` when `record` is non-nil; the transition's own `Assign` actions are skipped.
-5. **Error target entered**: the error target state and its initial descendants are entered.
-
-#### Worked example
+Every fallible guard needs an error route: set one for the whole machine with `DefaultGuardErr(target, record)`, or per transition with `OnGuardErr(target, record)`. An override replaces the whole route, so `OnGuardErr(target, nil)` runs no `record`. `record` is optional; it is how the error gets into `D`.
 
 ```go
-type MyData struct {
-    LastError string
-    CleanedUp bool
-}
-
-func (d MyData) Clone() MyData { return d }
-
-recordErr := func(d MyData, err error) MyData {
-    d.LastError = err.Error()
-    return d
-}
-
-machine := gstate.New[MyState, MyEvent, MyData]("policy_gate").
+gstate.New[MyState, MyEvent, MyData]("policy_gate").
+    DefaultGuardErr("failed", func(d MyData, err error) MyData { d.LastError = err.Error(); return d }).
     Initial("evaluating").
     State("evaluating", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-        s.Exit(func(d MyData) MyData {
-            d.CleanedUp = true
-            return d
-        })
-        s.On("SUBMIT").
-            GuardErr(evalPolicy).
-            GuardLabel("evalPolicy").
-            OnGuardErr("failed", recordErr).
-            Assign(markApproved). // skipped when evalPolicy returns an error
-            GoTo("approved")
-
-        s.On("SUBMIT").GoTo("rejected") // skipped when evalPolicy returns an error
-    }).
-    State("approved", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
-    State("rejected", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
-    State("failed", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
-    Build()
-
-guardLogger := gstate.ObserverFuncs[MyState, MyEvent, MyData]{
-    GuardEvaluatedFunc: func(_ context.Context, e *gstate.GuardEvent[MyState, MyEvent, MyData]) {
-        if e.Err != nil {
-            log.Printf("guard error on %s (%s -> %s): %v", e.State, e.Event, e.Target, e.Err)
-        }
-    },
-}
-actor := gstate.Start(machine, MyData{}, machine.WithObservers(guardLogger))
-```
-
-#### Machine default vs per-transition override
-
-Declare a machine-wide fallback route once with `MachineBuilder.DefaultGuardErr(target, record)` so individual `GuardErr` transitions don't have to repeat it. Any transition can override the default with `OnGuardErr(target, record)`.
-
-An override replaces the **entire** route — both `target` and `record`. Passing `nil` as `record` in `OnGuardErr(target, nil)` means no record reducer runs on that transition (it does not inherit the default's `record`):
-
-```go
-machine := gstate.New[MyState, MyEvent, MyData]("workflow").
-    DefaultGuardErr("failed", recordErr).
-    Initial("step1").
-    State("step1", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-        // Uses DefaultGuardErr: routes to "failed" and runs recordErr.
-        s.On("NEXT").GuardErr(checkA).GuardLabel("checkA").GoTo("step2")
-
-        // Overrides target and clears record: routes to "degraded" with no record step.
-        s.On("DEGRADE").GuardErr(checkB).OnGuardErr("degraded", nil).GoTo("step2")
-    }).
-    State("step2", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
-    State("degraded", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
-    State("failed", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
-    Build()
-```
-
-#### Parallel states and blast radius
-
-Where the error target sits in the state hierarchy controls the blast radius of a guard failure:
-
-- **Target outside the `Parallel` state (all regions exit)**: exits the entire `Parallel` subtree, canceling active `Invoke` services and timers across every region and dropping any transitions already selected in sibling regions for that step:
-
-```go
-gstate.New[MyState, MyEvent, MyData]("parallel_abort").
-    DefaultGuardErr("failed", recordErr).
-    Initial("active").
-    State("active", func(p *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-        p.Type(gstate.Parallel)
-        p.State("billing", func(r *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-            r.Initial("checking")
-            r.State("checking", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-                // "failed" is outside "active" -> exits both "billing" and "audit".
-                s.On("CHARGE").GuardErr(checkQuota).GoTo("charged")
-            })
-            r.State("charged", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {})
-        })
-        p.State("audit", func(r *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-            r.Initial("logging")
-            r.State("logging", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {})
-        })
-    }).
-    State("failed", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {}).
-    Build()
-```
-
-- **Target inside the same region (region-local recovery)**: exits only up to the region's LCA and enters the local error state while sibling regions remain active and settle their own `Always`/`OnDone` transitions normally (for an `On(event)` step, fail-fast selection still drops sibling picks for that single event):
-
-```go
-p.State("enrichment", func(r *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-    r.Initial("checking")
-    r.State("checking", func(s *gstate.StateBuilder[MyState, MyEvent, MyData]) {
-        // "enrich_skipped" stays inside "enrichment"; other regions keep running.
-        s.Always().
-            GuardErr(canEnrich).
-            OnGuardErr("enrich_skipped", recordErr).
-            GoTo("enriched")
+        s.Exit(cleanup) // runs on the error route too
+        s.On("SUBMIT").GuardErr(evalPolicy).GuardLabel("evalPolicy").GoTo("approved")
+        s.On("RETRY").GuardErr(checkQuota).OnGuardErr("degraded", nil).GoTo("approved")
     })
-    r.State("enriched", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {})
-    r.State("enrich_skipped", func(*gstate.StateBuilder[MyState, MyEvent, MyData]) {})
-})
+    // ... approved, degraded, failed states
 ```
 
-#### `Always`, `OnDone`, and `After` behavior
+When a fallible guard returns an error:
 
-- **`Always` and `OnDone`**: a guard error counts as the selected transition for that stabilization step — later `Always` or `OnDone` candidates (including unconditional fallbacks) are skipped, the error transition consumes one step from the shared `ErrAlwaysLimit` budget, and stabilization continues from the error target. `OnDone` lists using `GuardErr` must still end with an unguarded fallback to handle `(false, nil)`.
-- **`After`**: when a delayed timer fires while its source state is still active in the same entry generation, a `GuardErr` error routes through the same exit → `record` → entry sequence and settles any follow-on `Always`/`OnDone` transitions.
+1. Transition selection stops for that step. Candidates already picked in other parallel regions are dropped, and later `Always`/`OnDone` candidates and fallbacks are skipped.
+2. The source state's `Exit` actions run, as for any transition that leaves the state.
+3. `record(data, err)` runs in place of the transition's own `Assign`, which is skipped.
+4. The error target and its initial descendants are entered.
 
-#### Error visibility and why errors live in `D`
+Where the error target sits sets the blast radius: a target outside an enclosing `Parallel` state exits every region, while a target inside a region recovers just that region. This works on `On`, `Always`, `OnDone` and `After` transitions; the error route counts toward the `ErrAlwaysLimit` budget. An event whose guard errors counts as handled (no `OnEventDropped`). Observers see the error as `GuardEvent.Err`.
 
-- **In data (`D`)**: pass a `record(data, err)` reducer to project the failure into `D` (error text, code, retry counter).
-- **In observers**: `GuardObserver.OnGuardEvaluated` receives `*GuardEvent` with `Result == false` and `Err` set to the returned `error`. `GuardEvent.MarshalJSON` serializes non-nil `Err` under `"error"`, and `GuardEvent.String()` includes `err=<msg>`.
-- **Event handling**: an event whose guard errors counts as handled — `OnEventDropped` is not emitted, and any `SendWith` / `SendCtxWith` payload mutation is committed before exit and `record` actions run.
-- **Why the error lives in `D` rather than on the `Actor`**: guards, `Entry`/`Exit`/`Assign` reducers, and `Snapshot`/`Hydrate` only inspect and persist `D`. Keeping workflow guard errors in `D` makes them visible to recovery states and durable across snapshots, whereas `Actor.Err()` is reserved for terminal interpreter errors like `ErrAlwaysLimit`.
-
-#### Comparison with SCXML and XState
-
-- **SCXML**: in W3C SCXML, an error evaluating a `cond` expression treats the condition as `false` and queues `error.execution` internally, which an ordinary `<transition event="error.execution">` can handle. `gstate` **matches** SCXML by routing guard errors through a declared statechart transition rather than crashing the actor; it **differs** by failing fast (stopping candidate selection immediately instead of treating the guard as `false` and trying later candidates) and transitioning directly in the current step rather than queueing an internal event.
-- **XState**: in XState, an exception thrown inside a guard or action propagates to an enclosing `onError` handler or terminates the actor in an error status if unhandled. `gstate` **matches** XState in hierarchical blast-radius recovery (where the target state sits determines which states exit); it **differs** by returning `(bool, error)` values explicitly instead of throwing and requiring a build-time-validated error route (`OnGuardErr` or `DefaultGuardErr`), so a guard error never puts the actor into a terminal error status.
-
-#### Export representation
-
-- **Automatic `record` label**: when the resolved error route has a non-nil `record` reducer, the synthesized error transition automatically receives the action label `record <guardLabel> error`, or `record error` when the guard has no `GuardLabel`.
-- **Mermaid (`ToMermaid`)**: emits at most one dotted edge per `(source state, error target, trigger label)`, deduplicating guards that share a route — e.g. `step -. "GO [check1, check2] error / record error" .-> failed` (unlabeled guards render as `guard`; a single guard shows its own label, e.g. `/ record check error`, while a shared edge shows `/ record error`; the suffix is omitted when `record` is `nil`).
-- **SCXML (`ToSCXML` / `ToSCXMLString`)**: emits one `<transition event="error.execution" target="...">` handler per `(source state, error target)` after the state's normal transitions, with `<assign location="record <guardLabel> error"/>` (or `"record error"`) for each distinct non-nil `record` label in declaration order. When all fallible guards on a state route to the same error target, `cond` is omitted following standard SCXML convention; when a state has fallible guards with different error targets, each handler carries `cond="guard.error(<origins>)"` (for example `guard.error(on[0.0]:GO [a], on[1.0]:NEXT [b])`) to disambiguate which guards route where.
-
-#### Validation summary
-
-- `Guard` and `GuardErr` are mutually exclusive on the same transition.
-- Every `GuardErr` must resolve a route via `OnGuardErr` or `MachineBuilder.DefaultGuardErr`; omitting both is a build error.
-- `OnGuardErr` requires `GuardErr` on the same transition and a non-empty, declared target state; `DefaultGuardErr` requires a non-empty, declared target state and may only be set once per `MachineBuilder`.
-- Resolved error targets (from either `OnGuardErr` or `DefaultGuardErr`) must obey cross-region rules and, on `OnDone` transitions, must leave the completed source subtree; `OnDone` lists using `GuardErr` must still end with an unguarded fallback.
+This follows SCXML, where a failing `cond` raises `error.execution` that an ordinary transition handles, and XState, where an enclosing `onError` recovers a thrown error. Unlike both, gstate requires the error route at build time, so a guard error never leaves the actor in an error status. Validation rules are under [Build-Time Static Validation](#13-build-time-static-validation); export details are under [Visualization & Export](#visualization--export).
 
 ---
 
-## 10. Final States and Local Completion (`OnDone`)
+## 11. Final States and Local Completion (`OnDone`)
 
 A `Final` state indicates the completion of its enclosing compound state or parallel region. Once entered, no further transitions are processed from that final state.
 
@@ -519,7 +387,7 @@ s.OnDone().GoTo("next")
 
 ---
 
-## 11. Modular Composition (`Use`, `Extend`, and Checked Replacements)
+## 12. Modular Composition (`Use`, `Extend`, and Checked Replacements)
 
 Complex statecharts can be assembled from reusable plugins using `MachinePlugin[S, E, D]` (`func(*MachineBuilder[S, E, D])`) and `StatePlugin[S, E, D]` (`func(*StateBuilder[S, E, D])`):
 
@@ -552,7 +420,7 @@ func ApprovalPlugin(m *gstate.MachineBuilder[MyState, MyEvent, MyData]) {
 
 ---
 
-## 12. Build-Time Static Validation
+## 13. Build-Time Static Validation
 
 To prevent silent runtime errors (such as transitions to non-existent states due to typos), `gstate` performs static-analysis validation at build time when you call `Build()`. 
 
@@ -615,7 +483,7 @@ _ = gstate.New[MyState, MyEvent, MyData]("invalid_target").
 
 Each eventless (`Always`) sequence has a budget of `max(100, 2 * number of states)` transitions. If another enabled transition would exceed that budget, the actor stops, cancels services, and exposes `gstate.ErrAlwaysLimit` through `actor.Err()`. This is a resource bound, not proof of a cycle. Finite chains within the budget settle normally.
 
-## 13. Observing Lifecycle Events
+## 14. Observing Lifecycle Events
 
 When you want to record transitions, guard outcomes, state entries/exits, transition actions, and invoked services — for telemetry, tracing, audit logs, or just to debug what your machine is doing — you do **not** need to wrap every `Entry`, `Exit`, `Guard`, and `Invoke` by hand. Pass one or more observers to `Start`:
 
@@ -766,7 +634,7 @@ actor := gstate.Start(machine, MyData{Count: 0},
 Available options:
 
 - `WithMailboxSize(n)` — buffered capacity for the event channel. Default `100`.
-- `WithObservers(obs...)` — install one or more [observers](#13-observing-lifecycle-events). Variadic; pass any number of observers (each implementing whichever narrow callback interfaces it cares about). When omitted, no observer is installed and the engine skips payload construction entirely.
+- `WithObservers(obs...)` — install one or more [observers](#14-observing-lifecycle-events). Variadic; pass any number of observers (each implementing whichever narrow callback interfaces it cares about). When omitted, no observer is installed and the engine skips payload construction entirely.
 - `WithActorID(id)` — override the auto-generated [`ActorID`](#actor-identity).
 - `WithHydrateServices(enabled)` — on `Hydrate`, controls whether restored active states automatically start their `Invoke` services and `After` delayed timers (defaults to `true`; pass `false` to inspect or resume a snapshot without re-triggering in-flight side effects).
 
