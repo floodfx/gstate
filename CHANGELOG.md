@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/floodfx/gstate/compare/v0.3.3...v0.3.4) (2026-11-15)
+
+
+### Features
+
+* add fallible guards (GuardErr) ([057c358](https://github.com/floodfx/gstate/commit/057c35810667c107de72697f0ccb54792e174e16))
+
 ## [0.3.3](https://github.com/floodfx/gstate/compare/v0.3.2...v0.3.3) (2026-11-12)
 
 
