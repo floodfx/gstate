@@ -49,6 +49,22 @@ func (m *MachineBuilder[S, E, D]) ReplaceInitial(expected, next S) *MachineBuild
 	return m
 }
 
+// DefaultGuardErr sets the machine-wide error route used by every
+// [TransitionBuilder.GuardErr] transition that does not declare its own route
+// via [TransitionBuilder.OnGuardErr]. record may be nil when no error reducer
+// is needed. Repeated assignments are recorded as validation errors and retain
+// the first route.
+func (m *MachineBuilder[S, E, D]) DefaultGuardErr(target S, record func(D, error) D) *MachineBuilder[S, E, D] {
+	if m.machine.defaultGuardErrSet {
+		m.machine.buildErrors = append(m.machine.buildErrors, fmt.Errorf("gstate: machine default guard error route already set to %q; cannot assign %q", m.machine.defaultGuardErrTarget, target))
+		return m
+	}
+	m.machine.defaultGuardErrTarget = target
+	m.machine.defaultGuardErrAction = record
+	m.machine.defaultGuardErrSet = true
+	return m
+}
+
 // State defines a top-level state in the machine.
 // The provided function is used to configure the state's behavior via a StateBuilder.
 func (m *MachineBuilder[S, E, D]) State(id S, fn func(*StateBuilder[S, E, D])) *MachineBuilder[S, E, D] {
@@ -235,20 +251,25 @@ func (m *MachineBuilder[S, E, D]) validateStructure() error {
 func (m *MachineBuilder[S, E, D]) validateRegions() error {
 	for id, sd := range m.machine.States {
 		targets := []S{}
-		for _, ts := range sd.Transitions {
+		appendTransitionTargets := func(ts []*TransitionDef[S, E, D]) {
 			for _, t := range ts {
+				if t == nil {
+					continue
+				}
 				targets = append(targets, t.Target)
+				if t.GuardErr != nil {
+					if errTarget, _, ok := m.machine.guardErrRoute(t); ok {
+						targets = append(targets, errTarget)
+					}
+				}
 			}
 		}
-		for _, t := range sd.OnDone {
-			targets = append(targets, t.Target)
+		for _, ts := range sd.Transitions {
+			appendTransitionTargets(ts)
 		}
-		for _, t := range sd.Always {
-			targets = append(targets, t.Target)
-		}
-		for _, t := range sd.Delayed {
-			targets = append(targets, t.Target)
-		}
+		appendTransitionTargets(sd.OnDone)
+		appendTransitionTargets(sd.Always)
+		appendTransitionTargets(sd.Delayed)
 		if sd.Invoke != nil {
 			targets = append(targets, sd.Invoke.OnDone, sd.Invoke.OnError)
 		}
@@ -313,13 +334,52 @@ func (m *MachineBuilder[S, E, D]) validateCompletion() error {
 					return fmt.Errorf("gstate: state %q OnDone target %q is inside its completed source subtree", id, t.Target)
 				}
 			}
-			if i < len(sd.OnDone)-1 && t.Guard == nil {
+			if t.GuardErr != nil {
+				errTargetID, _, _ := m.machine.guardErrRoute(t)
+				errTarget, exists := m.machine.States[errTargetID]
+				if !exists {
+					return fmt.Errorf("gstate: state %q OnDone GuardErr target %q does not exist", id, errTargetID)
+				}
+				for _, ancestor := range errTarget.path {
+					if ancestor == id {
+						return fmt.Errorf("gstate: state %q OnDone GuardErr target %q is inside its completed source subtree", id, errTargetID)
+					}
+				}
+			}
+			if i < len(sd.OnDone)-1 && !t.guarded() {
 				return fmt.Errorf("gstate: state %q OnDone candidate follows unconditional fallback", id)
 			}
 		}
-		if sd.OnDone[len(sd.OnDone)-1].Guard != nil {
+		if sd.OnDone[len(sd.OnDone)-1].guarded() {
 			return fmt.Errorf("gstate: state %q OnDone requires a final unconditional fallback", id)
 		}
+	}
+	return nil
+}
+
+func (m *MachineBuilder[S, E, D]) validateGuardErr(id S, kind string, t *TransitionDef[S, E, D]) error {
+	if t == nil {
+		return nil
+	}
+	if t.Guard != nil && t.GuardErr != nil {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: Guard and GuardErr cannot both be set", m.machine.ID, id, kind)
+	}
+	ownRoute := t.hasOwnGuardErrRoute()
+	if t.GuardErr == nil {
+		if ownRoute {
+			return fmt.Errorf("gstate: machine %q state %q has invalid %s: OnGuardErr requires GuardErr", m.machine.ID, id, kind)
+		}
+		return nil
+	}
+	if ownRoute && t.GuardErrTarget == "" {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: OnGuardErr requires a non-empty error target", m.machine.ID, id, kind)
+	}
+	errTarget, _, ok := m.machine.guardErrRoute(t)
+	if !ok || errTarget == "" {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardErr has no error route: set OnGuardErr or MachineBuilder.DefaultGuardErr", m.machine.ID, id, kind)
+	}
+	if _, exists := m.machine.States[errTarget]; !exists {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardErr target %q does not exist", m.machine.ID, id, kind, errTarget)
 	}
 	return nil
 }
@@ -333,6 +393,14 @@ func (m *MachineBuilder[S, E, D]) validate() error {
 			return fmt.Errorf("gstate: machine %q has invalid initial state: %q does not exist", m.machine.ID, m.machine.Initial)
 		}
 	}
+	if m.machine.defaultGuardErrSet {
+		if m.machine.defaultGuardErrTarget == "" {
+			return fmt.Errorf("gstate: machine %q DefaultGuardErr requires a non-empty target", m.machine.ID)
+		}
+		if _, ok := m.machine.States[m.machine.defaultGuardErrTarget]; !ok {
+			return fmt.Errorf("gstate: machine %q DefaultGuardErr target %q does not exist", m.machine.ID, m.machine.defaultGuardErrTarget)
+		}
+	}
 
 	for id, state := range m.machine.States {
 		// 1. For compound states, verify initial child is valid if defined
@@ -344,34 +412,51 @@ func (m *MachineBuilder[S, E, D]) validate() error {
 
 		// 2. Verify all transitions specify a valid, existing state target
 		for event, transitions := range state.Transitions {
+			kind := fmt.Sprintf("transition on event %q", event)
 			for _, t := range transitions {
-				if t.Target != "" {
+				if t != nil && t.Target != "" {
 					if _, ok := m.machine.States[t.Target]; !ok {
 						return fmt.Errorf("gstate: machine %q state %q has invalid transition on event %q: target %q does not exist", m.machine.ID, id, event, t.Target)
 					}
+				}
+				if err := m.validateGuardErr(id, kind, t); err != nil {
+					return err
 				}
 			}
 		}
 
 		// 3. Verify all always transitions specify a valid, existing state target
 		for _, t := range state.Always {
-			if t.Target != "" {
+			if t != nil && t.Target != "" {
 				if _, ok := m.machine.States[t.Target]; !ok {
 					return fmt.Errorf("gstate: machine %q state %q has invalid Always transition: target %q does not exist", m.machine.ID, id, t.Target)
 				}
+			}
+			if err := m.validateGuardErr(id, "Always transition", t); err != nil {
+				return err
 			}
 		}
 
 		// 4. Verify all delayed transitions specify a valid, existing state target
 		for _, t := range state.Delayed {
-			if t.Target != "" {
+			if t != nil && t.Target != "" {
 				if _, ok := m.machine.States[t.Target]; !ok {
 					return fmt.Errorf("gstate: machine %q state %q has invalid Delayed transition: target %q does not exist", m.machine.ID, id, t.Target)
 				}
 			}
+			if err := m.validateGuardErr(id, "Delayed transition", t); err != nil {
+				return err
+			}
 		}
 
-		// 5. Verify all invoke transitions specify valid, existing state targets
+		// 5. Verify all OnDone transitions specify valid GuardErr settings
+		for _, t := range state.OnDone {
+			if err := m.validateGuardErr(id, "OnDone transition", t); err != nil {
+				return err
+			}
+		}
+
+		// 6. Verify all invoke transitions specify valid, existing state targets
 		if state.Invoke != nil {
 			if state.Invoke.OnDone != "" {
 				if _, ok := m.machine.States[state.Invoke.OnDone]; !ok {
@@ -631,7 +716,7 @@ func (s *StateBuilder[S, E, D]) OnDone() *TransitionBuilder[S, E, D] {
 func (s *StateBuilder[S, E, D]) ReplaceOnDone(expectedTarget S) *TransitionBuilder[S, E, D] {
 	t := &TransitionBuilder[S, E, D]{}
 	routes := s.state.OnDone
-	if len(routes) != 1 || routes[0] == nil || routes[0].Guard != nil || routes[0].Target != expectedTarget {
+	if len(routes) != 1 || routes[0] == nil || routes[0].guarded() || routes[0].Target != expectedTarget {
 		s.recordError("OnDone replacement requires one unconditional route targeting %q", expectedTarget)
 		return t
 	}
@@ -654,6 +739,41 @@ type TransitionBuilder[S ~string, E ~string, D Cloner[D]] struct {
 // Guard adds a conditional check to the transition.
 func (t *TransitionBuilder[S, E, D]) Guard(fn func(D) bool) *TransitionBuilder[S, E, D] {
 	t.def.Guard = fn
+	return t
+}
+
+// GuardErr adds a fallible conditional check to the transition. It is mutually
+// exclusive with [TransitionBuilder.Guard]; [TransitionBuilder.GuardLabel] names
+// either kind of guard for exports.
+//
+// Every GuardErr requires an error route resolved in order from
+// [TransitionBuilder.OnGuardErr] or [MachineBuilder.DefaultGuardErr]; omitting
+// both is a build-time validation error.
+//
+// When fn returns (true, nil), the transition fires normally; when it returns
+// (false, nil), evaluation moves on to the next candidate. When fn returns a
+// non-nil error, candidate selection stops immediately (dropping any candidates
+// selected in other parallel regions or later in an Always/OnDone list) and
+// routes via a synthesized external transition from the same source state to the
+// resolved error target: exit actions run, then record(data, err) runs in place
+// of the transition's own Assign (when record is non-nil; Assign is skipped),
+// then the error target and its initial descendants are entered. Where the error
+// target sits in the hierarchy sets the blast radius (targeting outside an
+// enclosing Parallel exits all regions; targeting inside a region recovers locally).
+func (t *TransitionBuilder[S, E, D]) GuardErr(fn func(D) (bool, error)) *TransitionBuilder[S, E, D] {
+	t.def.GuardErr = fn
+	return t
+}
+
+// OnGuardErr sets the per-transition error route for a [TransitionBuilder.GuardErr]
+// guard, overriding any [MachineBuilder.DefaultGuardErr] route (both target and
+// record; a nil record means no record action runs). Requires GuardErr on the
+// same transition and a non-empty target. Repeated calls overwrite the previous
+// per-transition route.
+func (t *TransitionBuilder[S, E, D]) OnGuardErr(target S, record func(D, error) D) *TransitionBuilder[S, E, D] {
+	t.def.GuardErrTarget = target
+	t.def.GuardErrAction = record
+	t.def.guardErrRouteSet = true
 	return t
 }
 

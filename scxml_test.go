@@ -1541,3 +1541,204 @@ func TestSCXMLNoSpuriousAttributes(t *testing.T) {
 		t.Errorf("expected at most 1 xmlns declaration, got %d", occurrences)
 	}
 }
+
+func TestSCXMLGuardErr(t *testing.T) {
+	type SB = StateBuilder[StateID, EventID, Context]
+	check := func(Context) (bool, error) { return true, nil }
+	record := func(c Context, _ error) Context { return c }
+
+	m := New[StateID, EventID, Context]("guard_err_scxml").
+		Initial("work").
+		State("work", func(w *SB) {
+			w.Initial("step")
+			w.State("step", func(s *SB) {
+				s.On("GO").GuardErr(check).OnGuardErr("failedGO", record).GuardLabel("check").GoTo("ok")
+				s.On("NEXT").GuardErr(check).OnGuardErr("failedNEXT", record).GuardLabel("check").GoTo("ok")
+				s.On("NOREG").GuardErr(check).OnGuardErr("failedNOREG", nil).GoTo("ok")
+				s.Always().GuardErr(check).OnGuardErr("failedAlways", record).GuardLabel("check").GoTo("ok")
+				s.After(time.Millisecond).GuardErr(check).OnGuardErr("failedAfter", record).GuardLabel("check").GoTo("ok")
+			})
+			w.State("fin", func(s *SB) { s.Type(Final) })
+			w.OnDone().GuardErr(check).OnGuardErr("failedDone", record).GuardLabel("check").GoTo("ok")
+			w.OnDone().GoTo("ok")
+		}).
+		State("ok", func(*SB) {}).
+		State("failedGO", func(*SB) {}).
+		State("failedNEXT", func(*SB) {}).
+		State("failedNOREG", func(*SB) {}).
+		State("failedAlways", func(*SB) {}).
+		State("failedAfter", func(*SB) {}).
+		State("failedDone", func(*SB) {}).
+		Build()
+
+	raw, err := ToSCXMLString(m)
+	if err != nil {
+		t.Fatalf("ToSCXMLString: %v", err)
+	}
+	doc := mustParseSCXML(t, raw)
+
+	step := nodeByID(doc.Children, "step")
+	if step == nil {
+		t.Fatal("step state not found")
+	}
+	// Expected transitions on step:
+	// [0] GO cond=check -> ok
+	// [1] NEXT cond=check -> ok
+	// [2] NOREG cond=guard -> ok
+	// [3] "" (Always) cond=check -> ok
+	// [4] _delay... cond=check -> ok
+	// [5] error.execution cond=guard.error(on[0.0]:GO [check]) -> failedGO (assign record check error)
+	// [6] error.execution cond=guard.error(on[1.0]:NEXT [check]) -> failedNEXT (assign record check error)
+	// [7] error.execution cond=guard.error(on[2.0]:NOREG [guard]) -> failedNOREG (no assign)
+	// [8] error.execution cond=guard.error(always[0] [check]) -> failedAlways (assign record check error)
+	// [9] error.execution cond=guard.error(after[0] [check]) -> failedAfter (assign record check error)
+	if len(step.Transitions) != 10 {
+		t.Fatalf("len(step.Transitions) = %d, want 10", len(step.Transitions))
+	}
+
+	if tr := step.Transitions[0]; tr.Event != "GO" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[0] = %+v, want GO cond=check target=ok", tr)
+	}
+	if tr := step.Transitions[1]; tr.Event != "NEXT" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[1] = %+v, want NEXT cond=check target=ok", tr)
+	}
+	if tr := step.Transitions[2]; tr.Event != "NOREG" || tr.Cond != "guard" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[2] = %+v, want NOREG cond=guard target=ok", tr)
+	}
+	if tr := step.Transitions[3]; tr.Event != "" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[3] = %+v, want Always cond=check target=ok", tr)
+	}
+	if tr := step.Transitions[4]; !strings.HasPrefix(tr.Event, "_delay.") || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("step.Transitions[4] = %+v, want delayed cond=check target=ok", tr)
+	}
+
+	wantStepErr := []struct {
+		idx        int
+		cond       string
+		target     string
+		assignName string
+	}{
+		{5, "guard.error(on[0.0]:GO [check])", "failedGO", "record check error"},
+		{6, "guard.error(on[1.0]:NEXT [check])", "failedNEXT", "record check error"},
+		{7, "guard.error(on[2.0]:NOREG [guard])", "failedNOREG", ""},
+		{8, "guard.error(always[0] [check])", "failedAlways", "record check error"},
+		{9, "guard.error(after[0] [check])", "failedAfter", "record check error"},
+	}
+	seenConds := make(map[string]bool)
+	for _, want := range wantStepErr {
+		tr := step.Transitions[want.idx]
+		if tr.Event != "error.execution" || tr.Cond != want.cond || tr.Target != want.target {
+			t.Fatalf("step.Transitions[%d] = %+v, want event=error.execution cond=%q target=%q", want.idx, tr, want.cond, want.target)
+		}
+		if seenConds[tr.Cond] {
+			t.Fatalf("duplicate error.execution cond %q", tr.Cond)
+		}
+		seenConds[tr.Cond] = true
+		if want.assignName != "" {
+			if len(tr.Assign) != 1 || tr.Assign[0].Location != want.assignName {
+				t.Fatalf("step.Transitions[%d] assign = %+v, want location=%q", want.idx, tr.Assign, want.assignName)
+			}
+		} else if len(tr.Assign) != 0 {
+			t.Fatalf("step.Transitions[%d] assign = %+v, want none", want.idx, tr.Assign)
+		}
+	}
+
+	work := nodeByID(doc.Children, "work")
+	if work == nil {
+		t.Fatal("work state not found")
+	}
+	// [0] done.state.work cond=check -> ok
+	// [1] done.state.work -> ok
+	// [2] error.execution (no cond; single error target) -> failedDone (assign record check error)
+	if len(work.Transitions) != 3 {
+		t.Fatalf("len(work.Transitions) = %d, want 3", len(work.Transitions))
+	}
+	if tr := work.Transitions[0]; tr.Event != "done.state.work" || tr.Cond != "check" || tr.Target != "ok" {
+		t.Fatalf("work.Transitions[0] = %+v", tr)
+	}
+	if tr := work.Transitions[1]; tr.Event != "done.state.work" || tr.Cond != "" || tr.Target != "ok" {
+		t.Fatalf("work.Transitions[1] = %+v", tr)
+	}
+	if tr := work.Transitions[2]; tr.Event != "error.execution" || tr.Cond != "" || tr.Target != "failedDone" || len(tr.Assign) != 1 || tr.Assign[0].Location != "record check error" {
+		t.Fatalf("work.Transitions[2] = %+v", tr)
+	}
+}
+
+func TestSCXMLGuardErrDedup(t *testing.T) {
+	type SB = StateBuilder[StateID, EventID, Context]
+	check := func(Context) (bool, error) { return true, nil }
+	record := func(c Context, _ error) Context { return c }
+
+	m := New[StateID, EventID, Context]("guard_err_scxml_dedup").
+		DefaultGuardErr("failed", record).
+		Initial("shared").
+		State("shared", func(s *SB) {
+			s.On("GO").GuardErr(check).GuardLabel("a").GoTo("ok")
+			s.On("NEXT").GuardErr(check).GuardLabel("b").GoTo("ok")
+			s.Always().GuardErr(check).GoTo("ok")
+		}).
+		State("mixed", func(s *SB) {
+			s.On("GO").GuardErr(check).GuardLabel("a").GoTo("ok")
+			s.On("NEXT").GuardErr(check).GuardLabel("b").GoTo("ok")
+			s.Always().GuardErr(check).GuardLabel("c").OnGuardErr("other", nil).GoTo("ok")
+		}).
+		State("ok", func(*SB) {}).
+		State("failed", func(*SB) {}).
+		State("other", func(*SB) {}).
+		Build()
+
+	raw, err := ToSCXMLString(m)
+	if err != nil {
+		t.Fatalf("ToSCXMLString: %v", err)
+	}
+	doc := mustParseSCXML(t, raw)
+
+	shared := nodeByID(doc.Children, "shared")
+	if shared == nil {
+		t.Fatal("shared state not found")
+	}
+	var sharedErr []*SCXMLTransition
+	for _, tr := range shared.Transitions {
+		if tr.Event == "error.execution" {
+			sharedErr = append(sharedErr, tr)
+		}
+	}
+	if len(sharedErr) != 1 {
+		t.Fatalf("len(sharedErr) = %d, want 1", len(sharedErr))
+	}
+	if tr := sharedErr[0]; tr.Target != "failed" || tr.Cond != "" {
+		t.Fatalf("shared error.execution = %+v, want target=failed cond=\"\"", tr)
+	}
+	wantSharedAssigns := []string{"record a error", "record b error", "record error"}
+	if len(sharedErr[0].Assign) != len(wantSharedAssigns) {
+		t.Fatalf("len(sharedErr[0].Assign) = %d, want %d", len(sharedErr[0].Assign), len(wantSharedAssigns))
+	}
+	for i, want := range wantSharedAssigns {
+		if got := sharedErr[0].Assign[i].Location; got != want {
+			t.Fatalf("sharedErr[0].Assign[%d].Location = %q, want %q", i, got, want)
+		}
+	}
+
+	mixed := nodeByID(doc.Children, "mixed")
+	if mixed == nil {
+		t.Fatal("mixed state not found")
+	}
+	var mixedErr []*SCXMLTransition
+	for _, tr := range mixed.Transitions {
+		if tr.Event == "error.execution" {
+			mixedErr = append(mixedErr, tr)
+		}
+	}
+	if len(mixedErr) != 2 {
+		t.Fatalf("len(mixedErr) = %d, want 2", len(mixedErr))
+	}
+	if tr := mixedErr[0]; tr.Target != "failed" || tr.Cond != "guard.error(on[0.0]:GO [a], on[1.0]:NEXT [b])" {
+		t.Fatalf("mixedErr[0] = %+v", tr)
+	}
+	if len(mixedErr[0].Assign) != 2 || mixedErr[0].Assign[0].Location != "record a error" || mixedErr[0].Assign[1].Location != "record b error" {
+		t.Fatalf("mixedErr[0].Assign = %+v", mixedErr[0].Assign)
+	}
+	if tr := mixedErr[1]; tr.Target != "other" || tr.Cond != "guard.error(always[0] [c])" || len(tr.Assign) != 0 {
+		t.Fatalf("mixedErr[1] = %+v", tr)
+	}
+}

@@ -157,16 +157,20 @@ func (e *TransitionEvent[S, E, D]) String() string {
 }
 
 // GuardEvent is the payload for [Observer.OnGuardEvaluated]. It is emitted
-// only when the transition defines a non-nil Guard, so the absence of an
-// event does not imply the absence of guard evaluation.
+// only when the transition defines a non-nil Guard or GuardErr, so the absence
+// of an event does not imply the absence of guard evaluation.
 type GuardEvent[S ~string, E ~string, D Cloner[D]] struct {
 	MachineID string  `json:"machine_id"`
 	ActorID   ActorID `json:"actor_id"`
 	State     S       `json:"state"`
 	// Event is the triggering event. Zero value for Always guards.
-	Event     E         `json:"event,omitempty"`
-	Target    S         `json:"target"`
-	Result    bool      `json:"result"`
+	Event  E    `json:"event,omitempty"`
+	Target S    `json:"target"`
+	Result bool `json:"result"`
+	// Err is the error returned by a GuardErr guard, or nil when no error occurred.
+	// Result is false when Err is set. It serializes to JSON under "error" when
+	// non-nil — see [GuardEvent.MarshalJSON].
+	Err       error     `json:"-"`
 	Timestamp time.Time `json:"timestamp"`
 
 	data   D
@@ -184,18 +188,29 @@ func (e *GuardEvent[S, E, D]) Data() *D {
 
 func (e *GuardEvent[S, E, D]) MarshalJSON() ([]byte, error) {
 	type alias GuardEvent[S, E, D]
+	var errMsg string
+	if e.Err != nil {
+		errMsg = e.Err.Error()
+	}
 	return json.Marshal(struct {
 		*alias
-		Data *D `json:"data,omitempty"`
+		Error string `json:"error,omitempty"`
+		Data  *D     `json:"data,omitempty"`
 	}{
 		alias: (*alias)(e),
+		Error: errMsg,
 		Data:  e.Data(),
 	})
 }
 
-// String renders the guard as "guard[ActorID]: State --Event[Target]: result=true|false".
+// String renders the guard as "guard[ActorID]: State --Event[Target]: result=true|false"
+// (with " err=<msg>" appended when Err is non-nil).
 func (e *GuardEvent[S, E, D]) String() string {
-	return fmt.Sprintf("guard[%s]: %s --%s[%s]: result=%t", e.ActorID, e.State, e.Event, e.Target, e.Result)
+	s := fmt.Sprintf("guard[%s]: %s --%s[%s]: result=%t", e.ActorID, e.State, e.Event, e.Target, e.Result)
+	if e.Err != nil {
+		s += fmt.Sprintf(" err=%v", e.Err)
+	}
+	return s
 }
 
 // InvokeEvent is the payload for [Observer.OnInvokeStarted] and
