@@ -134,9 +134,15 @@ type TransitionDef[S ~string, E ~string, D Cloner[D]] struct {
 	// actionName is a human-readable label for the action, used in SCXML export.
 	actionName       string
 	guardErrRouteSet bool
+	// guardIn records GuardIn calls; validation allows exactly one.
+	guardIn []S
 }
 
 func (t *TransitionDef[S, E, D]) guarded() bool {
+	return t.funcGuarded() || len(t.guardIn) > 0
+}
+
+func (t *TransitionDef[S, E, D]) funcGuarded() bool {
 	return t.Guard != nil || t.GuardErr != nil
 }
 

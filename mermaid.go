@@ -294,10 +294,17 @@ func emitTransitionEdge[S ~string, E ~string, D Cloner[D]](f *mm.Flowchart, from
 func transitionLabel[S ~string, E ~string, D Cloner[D]](event string, tr *TransitionDef[S, E, D]) string {
 	label := event
 	if tr.guarded() {
+		var conds []string
+		if len(tr.guardIn) > 0 {
+			conds = append(conds, "in "+string(tr.guardIn[0]))
+		}
+		if tr.funcGuarded() {
+			conds = append(conds, tr.guardLabel())
+		}
 		if label != "" {
 			label += " "
 		}
-		label += fmt.Sprintf("[%s]", tr.guardLabel())
+		label += "[" + strings.Join(conds, ", ") + "]"
 	}
 	if tr.Action != nil {
 		name := tr.actionName
