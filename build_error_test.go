@@ -159,6 +159,23 @@ func TestBuildWithErrorValidation(t *testing.T) {
 				w.ReplaceOnDone("next").GoTo("failed")
 			}).State("next", func(*B) {}).State("failed", func(*B) {})
 		}, "OnDone replacement requires one unconditional route"},
+		{"guardin-twice", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.On("GO").GuardIn("a").GuardIn("b").GoTo("b")
+			}).State("b", func(*B) {})
+		}, "GuardIn can be set only once"},
+		{"guardin-missing-state", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.On("GO").GuardIn("missing").GoTo("b")
+			}).State("b", func(*B) {})
+		}, `GuardIn state "missing" does not exist`},
+		{"ondone-guardin-final", func(b *MB) {
+			b.Initial("a").State("a", func(s *B) {
+				s.Initial("f")
+				s.State("f", func(f *B) { f.Type(Final) })
+				s.OnDone().GuardIn("f").GoTo("b")
+			}).State("b", func(*B) {})
+		}, "OnDone requires a final unconditional fallback"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
