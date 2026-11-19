@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/floodfx/gstate/compare/v0.3.4...v0.3.5) (2026-11-19)
+
+
+### Features
+
+* add GuardIn in-state guard ([8844f26](https://github.com/floodfx/gstate/commit/8844f26d25b3fa1e38052e32f99e59dd7ca824f8))
+
 ## [0.3.4](https://github.com/floodfx/gstate/compare/v0.3.3...v0.3.4) (2026-11-15)
 
 
