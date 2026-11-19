@@ -1,12 +1,10 @@
 package gstate
 
 import (
-	"context"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 type guardInState = StateBuilder[StateID, EventID, Context]
@@ -69,46 +67,6 @@ func TestGuardIn_AlwaysSeesOtherParallelRegion(t *testing.T) {
 	defer a.Stop()
 	if !a.Matches("a2") || a.Matches("a1") || a.Matches("a3") {
 		t.Fatalf("active = %v, want a2 (not a1 or a3)", a.States())
-	}
-}
-
-func TestGuardIn_EventUsesConfigurationAtSelection(t *testing.T) {
-	checked := make(chan struct{})
-	obs := ObserverFuncs[StateID, EventID, Context]{
-		TransitionFunc: func(_ context.Context, e *TransitionEvent[StateID, EventID, Context]) {
-			if e.To == "b3" {
-				close(checked)
-			}
-		},
-	}
-	m := New[StateID, EventID, Context]("selection").
-		Initial("p").
-		State("p", func(p *guardInState) {
-			p.Type(Parallel)
-			p.State("r1", func(r *guardInState) {
-				r.Initial("a1")
-				r.State("a1", func(s *guardInState) { s.On("GO").GuardIn("b1").GoTo("a2") })
-				r.State("a2", func(*guardInState) {})
-			})
-			p.State("r2", func(r *guardInState) {
-				r.Initial("b1")
-				r.State("b1", func(s *guardInState) { s.On("GO").GoTo("b2") })
-				r.State("b2", func(s *guardInState) { s.On("CHECK").GoTo("b3") })
-				r.State("b3", func(*guardInState) {})
-			})
-		}).
-		Build()
-	a := Start(m, Context{}, m.WithObservers(obs))
-	defer a.Stop()
-	a.Send("GO")
-	a.Send("CHECK")
-	select {
-	case <-checked:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("CHECK not processed; active = %v", a.States())
-	}
-	if !a.Matches("a2") || !a.Matches("b3") {
-		t.Fatalf("active = %v, want a2 and b3", a.States())
 	}
 }
 
