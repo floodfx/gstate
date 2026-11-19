@@ -381,7 +381,17 @@ s.OnDone().Guard(hasError).GuardLabel("hasError").GoTo("error")
 s.OnDone().GoTo("next")
 ```
 
-`OnDone` supports `Guard`, `GuardErr`, `OnGuardErr`, `GuardLabel`, `Assign`, and `ActionLabel`. Its source must be compound or parallel, its target (and any resolved `GuardErr` error route target) must leave that source's subtree, and its final candidate must be unguarded (no `Guard` or `GuardErr`). Completion does not imply success: guards inspect the outcome before exit reducers run, and `Assign` runs after exit reducers. Eventless `Always` transitions settle before queued completion transitions, and both share the `ErrAlwaysLimit` transition budget. Completion dispatch waits until the entire selected parallel event batch has executed. Observers receive the normal transition with the completed parent as `From` and the zero event value; Mermaid exports label it `done` and SCXML exports use `done.state.<sourceID>`. Hydration seeds restored final leaves without re-running their entry reducers.
+`GuardIn(state)` passes when `state` is in the active configuration. Completion guards run while the completed final child is still active, so `GuardIn` routes on which final was reached:
+
+```go
+s.OnDone().GuardIn("approved").GoTo("ship")
+s.OnDone().GuardIn("revise").GoTo("fix")
+s.OnDone().GoTo("failed")
+```
+
+`GuardIn` ANDs with `Guard` or `GuardErr` and is checked first; when it is false the function guard is not called, so a `GuardErr` cannot error.
+
+`OnDone` supports `Guard`, `GuardErr`, `GuardIn`, `OnGuardErr`, `GuardLabel`, `Assign`, and `ActionLabel`. Its source must be compound or parallel, its target (and any resolved `GuardErr` error route target) must leave that source's subtree, and its final candidate must be unguarded (no `Guard`, `GuardErr`, or `GuardIn`). Completion does not imply success: guards inspect the outcome before exit reducers run, and `Assign` runs after exit reducers. Eventless `Always` transitions settle before queued completion transitions, and both share the `ErrAlwaysLimit` transition budget. Completion dispatch waits until the entire selected parallel event batch has executed. Observers receive the normal transition with the completed parent as `From` and the zero event value; Mermaid exports label it `done` and SCXML exports use `done.state.<sourceID>`. Hydration seeds restored final leaves without re-running their entry reducers.
 
 > **Try it:** [agent example](./examples/agent) — guards, always transitions, retries, and final states in a real workflow.
 

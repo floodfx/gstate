@@ -473,9 +473,14 @@ func convertFinalNode[S ~string, E ~string, D Cloner[D]](def *StateDef[S, E, D],
 
 func convertTransition[S ~string, E ~string, D Cloner[D]](t *TransitionDef[S, E, D], event string) *SCXMLTransition {
 	tr := &SCXMLTransition{Event: event, Target: string(t.Target)}
-	if t.guarded() {
-		tr.Cond = t.guardLabel()
+	var conds []string
+	if len(t.guardIn) > 0 {
+		conds = append(conds, "In('"+string(t.guardIn[0])+"')")
 	}
+	if t.funcGuarded() {
+		conds = append(conds, t.guardLabel())
+	}
+	tr.Cond = strings.Join(conds, " and ")
 	if t.Action != nil {
 		tr.Assign = []*SCXMLAssign{{Location: t.actionName}}
 	}

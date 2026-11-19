@@ -1068,7 +1068,10 @@ type eventTransition[S ~string, E ~string, D Cloner[D]] struct {
 }
 
 func (a *Actor[S, E, D]) evalGuard(ctx context.Context, source S, event E, t *TransitionDef[S, E, D]) (route *TransitionDef[S, E, D], errored bool) {
-	if !t.guarded() {
+	if len(t.guardIn) > 0 && !a.active[t.guardIn[0]] {
+		return nil, false
+	}
+	if !t.funcGuarded() {
 		return t, false
 	}
 	var ok bool

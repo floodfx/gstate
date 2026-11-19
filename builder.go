@@ -357,9 +357,17 @@ func (m *MachineBuilder[S, E, D]) validateCompletion() error {
 	return nil
 }
 
-func (m *MachineBuilder[S, E, D]) validateGuardErr(id S, kind string, t *TransitionDef[S, E, D]) error {
+func (m *MachineBuilder[S, E, D]) validateGuards(id S, kind string, t *TransitionDef[S, E, D]) error {
 	if t == nil {
 		return nil
+	}
+	if len(t.guardIn) > 1 {
+		return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardIn can be set only once", m.machine.ID, id, kind)
+	}
+	if len(t.guardIn) == 1 {
+		if _, ok := m.machine.States[t.guardIn[0]]; !ok {
+			return fmt.Errorf("gstate: machine %q state %q has invalid %s: GuardIn state %q does not exist", m.machine.ID, id, kind, t.guardIn[0])
+		}
 	}
 	if t.Guard != nil && t.GuardErr != nil {
 		return fmt.Errorf("gstate: machine %q state %q has invalid %s: Guard and GuardErr cannot both be set", m.machine.ID, id, kind)
@@ -419,7 +427,7 @@ func (m *MachineBuilder[S, E, D]) validate() error {
 						return fmt.Errorf("gstate: machine %q state %q has invalid transition on event %q: target %q does not exist", m.machine.ID, id, event, t.Target)
 					}
 				}
-				if err := m.validateGuardErr(id, kind, t); err != nil {
+				if err := m.validateGuards(id, kind, t); err != nil {
 					return err
 				}
 			}
@@ -432,7 +440,7 @@ func (m *MachineBuilder[S, E, D]) validate() error {
 					return fmt.Errorf("gstate: machine %q state %q has invalid Always transition: target %q does not exist", m.machine.ID, id, t.Target)
 				}
 			}
-			if err := m.validateGuardErr(id, "Always transition", t); err != nil {
+			if err := m.validateGuards(id, "Always transition", t); err != nil {
 				return err
 			}
 		}
@@ -444,14 +452,14 @@ func (m *MachineBuilder[S, E, D]) validate() error {
 					return fmt.Errorf("gstate: machine %q state %q has invalid Delayed transition: target %q does not exist", m.machine.ID, id, t.Target)
 				}
 			}
-			if err := m.validateGuardErr(id, "Delayed transition", t); err != nil {
+			if err := m.validateGuards(id, "Delayed transition", t); err != nil {
 				return err
 			}
 		}
 
-		// 5. Verify all OnDone transitions specify valid GuardErr settings
+		// 5. Verify all OnDone transitions specify valid guard settings
 		for _, t := range state.OnDone {
-			if err := m.validateGuardErr(id, "OnDone transition", t); err != nil {
+			if err := m.validateGuards(id, "OnDone transition", t); err != nil {
 				return err
 			}
 		}
@@ -774,6 +782,15 @@ func (t *TransitionBuilder[S, E, D]) OnGuardErr(target S, record func(D, error) 
 	t.def.GuardErrTarget = target
 	t.def.GuardErrAction = record
 	t.def.guardErrRouteSet = true
+	return t
+}
+
+// GuardIn makes the transition conditional on state being in the active
+// configuration when candidates are selected. On OnDone this routes on which
+// final child completed. It ANDs with Guard or GuardErr and is checked first:
+// when false, the function guard is not called. One GuardIn per transition.
+func (t *TransitionBuilder[S, E, D]) GuardIn(state S) *TransitionBuilder[S, E, D] {
+	t.def.guardIn = append(t.def.guardIn, state)
 	return t
 }
 
